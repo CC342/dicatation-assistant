@@ -366,4 +366,10 @@ with gr.Blocks() as demo:
     )
 
 if __name__ == "__main__":
-    demo.launch(css=ios_glass_css, theme=gr.themes.Soft())
+    demo.launch(
+        css=ios_glass_css, 
+        theme=gr.themes.Soft(), 
+        show_api=False,
+        server_name="0.0.0.0",
+        server_port=7860
+    )
