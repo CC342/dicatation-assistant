@@ -6,7 +6,17 @@ export default {
   async fetch(request, env) {
     const upstream = '*.hf.space'; // 你的 HF 域名
     const url = new URL(request.url);
-    
+  
+    // 🔴 【超级外挂】定点拦截域名验证请求！直接在这里返回暗号，不惊动后端
+    if (url.pathname === '/微信给的名称.txt') {
+      return new Response('内容', {
+        status: 200,
+        headers: { 
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Access-Control-Allow-Origin': '*'
+        }
+      });
+    }
     // 替换域名
     url.host = upstream;
     url.protocol = 'https:'; // 强制 HTTPS
