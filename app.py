@@ -131,7 +131,7 @@ def process_dictation(text, voice, speed, pause_seconds, pitch, shuffle_bool):
 # ================= 3. 高透干净版 iOS 样式与播放器“去进度条”专属 CSS =================
 ios_glass_css = """
 body, .gradio-container {
-    background-image: url('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80') !important;
+    background-image: url('https://images.unsplash.com/photo-1504309092620-4d0ec726efa4?auto=format&fit=crop&w=1920&q=80') !important;
     background-size: cover !important;
     background-position: center !important;
     background-attachment: fixed !important;
@@ -140,19 +140,62 @@ body, .gradio-container {
 
 #main-title {
     text-align: center !important;
-    margin-bottom: 20px !important;
+    margin-bottom: 22px !important;
 }
 
+/*  ✨ 极简美美化：苹果官网质感纯白大标题 ✨  */
 #main-title h1 {
-    color: #1d1d1f !important;
-    font-size: 2.6rem !important;
-    font-weight: 700 !important;
-    letter-spacing: -0.05em;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", "PingFang SC", sans-serif !important; 
+    
+    /* 🔴 彻底重塑：去除任何彩色和渐变，换成高雅纯白色 */
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+    background: none !important;
+    
+    font-size: 3.4rem !important; 
+    font-weight: 800 !important;
+    letter-spacing: -0.02em !important; 
+    
+    /* 视网膜级轻微雾面阴影，保障在亮色泳池图上清晰、立体、不刺眼 */
+    text-shadow: 0px 4px 15px rgba(0, 0, 0, 0.15) !important; 
     margin-bottom: 4px !important;
 }
 
+#main-title p {
+    color: #edf2f7 !important; /* 标语语同步换成温柔的浅亮色，彻底告别黑色 */
+    text-shadow: 0px 2px 8px rgba(0, 0, 0, 0.2) !important;
+    font-family: "PingFang SC", sans-serif !important; 
+    font-size: 1.05rem !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.04em !important;
+    margin-bottom: 15px !important;
+}
+
+/* 💥 降维打击：强行抹除 Hugging Face 顶部的官方悬浮点赞工具栏 */
+header, .hf-header, div[class*="space-header"], div[id*="header"], div[class*="Header"] {
+    display: none !important;
+    visibility: hidden !important;
+    height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
+    
+
+/*  💥 强迫症福音：彻底干掉 Gradio 官方底部页脚声明  */
+footer, .footer, .gradio-container footer, div[class*="footer"] {
+    display: none !important;
+    visibility: hidden !important;
+    height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
+
 .ios-glass {
-    background: rgba(255, 255, 255, 0.28) !important;
+    background: rgba(255, 255, 255, 0.25) !important;
     border-radius: 20px !important;
     border: 1px solid rgba(255, 255, 255, 0.6) !important;
     box-shadow: 0 10px 35px rgba(0, 0, 0, 0.05) !important;
@@ -211,7 +254,7 @@ with gr.Blocks() as demo:
     
     with gr.Column(elem_id="main-title"):
         gr.Markdown("# ✍️ 听写助手")
-        gr.Markdown("一字一句默默积累，静待花开，见证每一个小小的进步！")
+        gr.Markdown("默默积累，静待花开之时！")
         
     with gr.Accordion("➕ 添加年级", open=False, elem_classes=["ios-glass"]):
         with gr.Row():
@@ -247,7 +290,7 @@ with gr.Blocks() as demo:
                 gr.Markdown("### 📝 听写字词表")
                 input_text = gr.Textbox(
                     value=default_text,
-                    label="当前准备听写的字词（可在框内直接临时修改、增删）",
+                    label="当前准备听写的字词（可在框内临时修改、增删）",
                     placeholder="选中的课时字词会自动合并展现到这里...",
                     lines=5
                 )
@@ -262,11 +305,12 @@ with gr.Blocks() as demo:
                 gr.Markdown("### ⚙️ 老师发音微调")
                 voice_select = gr.Dropdown(
                     choices=[
+                        ("✅ 稳过女声：标准普通话女声 (晓晓 - 默认)", "zh-CN-XiaoxiaoNeural"),
                         ("✅ 稳过男声：自然故事男老师 (云希 - 压低音调)", "zh-CN-YunxiNeural"),
                         ("✅ 稳过女声：生动小说女老师 (晓伊 - 很有感情)", "zh-CN-XiaoyiNeural"),
                         ("✅ 稳过男声：沉稳老教师男声 (云健 - 严肃认真)", "zh-CN-YunjianNeural"),
-                        ("✅ 稳过男声：新闻纪录片男声 (云扬 - 吐字正气)", "zh-CN-YunyangNeural"),
-                        ("✅ 稳过女声：标准普通话女声 (晓晓 - 默认)", "zh-CN-XiaoxiaoNeural")
+                        ("✅ 稳过男声：新闻纪录片男声 (云扬 - 吐字正气)", "zh-CN-YunyangNeural")
+                        
                     ],
                     value="zh-CN-XiaoxiaoNeural",
                     label="选择语文老师声线"
