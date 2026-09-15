@@ -1,5 +1,6 @@
 import os
 import edge_tts
+import edge_tts.communicate  # 必须引入这个内部模块
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
@@ -7,8 +8,26 @@ from pydantic import BaseModel
 from typing import List
 import re
 import random
-from urllib.parse import unquote  # 引入 URL 解码器，防止中文路径变乱码
+from urllib.parse import unquote
 from mangum import Mangum
+
+# ================= 🚀 终极黑科技：拦截器 =================
+# 强行拦截 edge-tts 的转义引擎。当检测到是我们自己写的停顿代码时，原封不动地放行！
+import xml.sax.saxutils
+
+_orig_xml_escape = xml.sax.saxutils.escape
+def _bypass_xml_escape(data, entities={}):
+    # 只要包含了我们写的标签，就绝对不转义，骗过系统直接发送给微软
+    if "<break" in data or "</prosody>" in data:
+        return data
+    return _orig_xml_escape(data, entities)
+
+# 在系统底层强行替换转义函数
+xml.sax.saxutils.escape = _bypass_xml_escape
+if hasattr(edge_tts.communicate, "escape"):
+    edge_tts.communicate.escape = _bypass_xml_escape
+# =======================================================
+
 
 app = FastAPI()
 
@@ -35,7 +54,7 @@ def get_grades():
 
 @app.get("/api/files/{grade}")
 def get_files(grade: str):
-    grade = unquote(grade)  # 🚨 解码中文年级名称，防乱码找不到文件夹
+    grade = unquote(grade) 
     grade_path = os.path.join(BASE_DIR, grade)
     
     if not os.path.exists(grade_path) or not os.path.isdir(grade_path):
@@ -43,7 +62,6 @@ def get_files(grade: str):
         
     files = []
     for f in os.listdir(grade_path):
-        # 🚨 放宽条件：不再死磕 .txt 后缀，只要不是隐藏文件全部扫出来
         if not f.startswith('.'):
             name, _ = os.path.splitext(f)
             files.append(name)
@@ -57,14 +75,13 @@ class ContentRequest(BaseModel):
 
 @app.post("/api/content")
 def get_content(req: ContentRequest):
-    grade = unquote(req.grade) # 解码中文
+    grade = unquote(req.grade) 
     if not req.files or "请先" in grade:
         return {"text": ""}
         
     combined_words = []
     for fn in req.files:
         if not fn: continue
-        # 🚨 兼容扫描：不管是带 .txt 还是没带后缀，都能精确读出内容
         for ext in [".txt", ""]:
             file_path = os.path.join(BASE_DIR, grade, f"{fn}{ext}")
             if os.path.exists(file_path):
@@ -77,7 +94,7 @@ def get_content(req: ContentRequest):
     return {"text": "、".join(combined_words)}
 
 
-# ================= 2. 完美的流媒体合成 + 伪装注入防读代码 =================
+# ================= 2. 完美的流媒体合成 + 伪装注入 =================
 @app.get("/api/stream")
 async def stream_audio(
     text: str,
@@ -100,7 +117,7 @@ async def stream_audio(
         pause_ms = int(pause_seconds * 1000)
         word_gap_ms = pause_ms + 500
 
-        # SSML 标签伪装注入（完美骗过 edge-tts，再也不会读出英文代码了）
+        # 这次因为有拦截器护航，这些代码会被微软服务器乖乖识别为“停顿”！
         injected_parts = []
         for i, word in enumerate(words):
             injected_parts.append(word)
