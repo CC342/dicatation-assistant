@@ -1,6 +1,6 @@
 import os
 import edge_tts
-import edge_tts.communicate  # 必须引入这个内部模块
+import edge_tts.communicate
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
@@ -9,25 +9,26 @@ from typing import List
 import re
 import random
 from urllib.parse import unquote
+import xml.sax.saxutils
 from mangum import Mangum
 
-# ================= 🚀 终极黑科技：拦截器 =================
-# 强行拦截 edge-tts 的转义引擎。当检测到是我们自己写的停顿代码时，原封不动地放行！
-import xml.sax.saxutils
+# ================= 🚀 终极安全拦截器 =================
+# 只针对 edge_tts，绝对不影响 FastAPI 系统的其他部分
+_orig_escape = xml.sax.saxutils.escape
 
-_orig_xml_escape = xml.sax.saxutils.escape
-def _bypass_xml_escape(data, entities={}):
-    # 只要包含了我们写的标签，就绝对不转义，骗过系统直接发送给微软
-    if "<break" in data or "</prosody>" in data:
+def _safe_escape(data, entities=None):
+    # 安全的类型检查：只有是字符串且包含我们的标签时，才放行
+    if isinstance(data, str) and ("<break" in data or "</prosody>" in data):
         return data
-    return _orig_xml_escape(data, entities)
+    # 其他所有情况，乖乖走系统原生的转义逻辑
+    if entities is None:
+        return _orig_escape(data)
+    return _orig_escape(data, entities)
 
-# 在系统底层强行替换转义函数
-xml.sax.saxutils.escape = _bypass_xml_escape
+# 精准狙击：只替换 edge_tts 内部的 escape，绝不触碰系统全局！
 if hasattr(edge_tts.communicate, "escape"):
-    edge_tts.communicate.escape = _bypass_xml_escape
+    edge_tts.communicate.escape = _safe_escape
 # =======================================================
-
 
 app = FastAPI()
 
@@ -117,7 +118,7 @@ async def stream_audio(
         pause_ms = int(pause_seconds * 1000)
         word_gap_ms = pause_ms + 500
 
-        # 这次因为有拦截器护航，这些代码会被微软服务器乖乖识别为“停顿”！
+        # 在安全的拦截器护航下，注入停顿代码
         injected_parts = []
         for i, word in enumerate(words):
             injected_parts.append(word)
