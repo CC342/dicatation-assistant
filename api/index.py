@@ -18,10 +18,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 动态定位 data 目录（在 Vercel 中，data 文件夹与 api 目录同级在根目录下）
-BASE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+BASE_DIR = os.path.dirname(os.path.dirname(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
 
-# ================= 1. 物理文件扫描逻辑 (完全根据你的 Armbian 原版 1:1 还原) =================
+# ================= 1. 物理文件扫描逻辑 (一字未改) =================
 def natural_sort_key(s):
     return [(0, int(text)) if text.isdigit() else (1, text.lower()) for text in re.split(r'(\d+)', s)]
 
@@ -69,8 +69,7 @@ def get_content(req: ContentRequest):
     return {"text": "、".join(combined_words)}
 
 
-# ================= 2. 终极绝杀：完全不碰硬盘的纯内存流媒体直出 =================
-# 完全替代了原版的 pydub，但朗读节奏和停顿细节严格 100% 对齐原版！
+# ================= 2. 终极修复：SSML代码注入极速版 =================
 @app.get("/api/stream")
 async def stream_audio(
     text: str,
@@ -81,43 +80,39 @@ async def stream_audio(
     shuffle_bool: bool = False
 ):
     try:
-        # 严格保留你的切词与乱序逻辑
-        raw_words = re.split(r'[,，\s、\n\r]+', text)
+        raw_words = re.split(r'[,$,\s、\n\r]+', text)
         words = [w.strip() for w in raw_words if w.strip()]
         if not words:
             raise HTTPException(status_code=400, detail="词语列表为空")
         if shuffle_bool:
             random.shuffle(words)
 
-        # 严格保留你的语速、语调、停顿计算逻辑
         speed_rate = f"{int((speed - 1.0) * 100)}%" if speed != 1.0 else "+0%"
         pitch_rate = f"{pitch:+d}Hz"
         pause_ms = int(pause_seconds * 1000)
         word_gap_ms = pause_ms + 500
 
-        ssml_parts = ["<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='zh-CN'>"]
-        ssml_parts.append(f"<voice name='{voice}'>")
-        
-        # 严格还原原版的 pydub 拼接逻辑：读一遍+停顿+读一遍+停顿+读最后一遍
+        # 🚨 核心修复：把停顿指令“伪装”并注入到文本中，避免 edge-tts 把代码当成英文读出来！
+        injected_parts = []
         for i, word in enumerate(words):
             # 第一遍
-            ssml_parts.append(f"<prosody rate='{speed_rate}' pitch='{pitch_rate}'>{word}</prosody>")
-            ssml_parts.append(f"<break time='{pause_ms}ms'/>")
+            injected_parts.append(word)
+            injected_parts.append(f"</prosody><break time='{pause_ms}ms'/><prosody rate='{speed_rate}' pitch='{pitch_rate}'>")
             # 第二遍
-            ssml_parts.append(f"<prosody rate='{speed_rate}' pitch='{pitch_rate}'>{word}</prosody>")
-            ssml_parts.append(f"<break time='{pause_ms}ms'/>")
-            # 第三遍 (原版 pydub 中第三遍后面直接接 word_gap，所以这里不加 pause_ms)
-            ssml_parts.append(f"<prosody rate='{speed_rate}' pitch='{pitch_rate}'>{word}</prosody>")
+            injected_parts.append(word)
+            injected_parts.append(f"</prosody><break time='{pause_ms}ms'/><prosody rate='{speed_rate}' pitch='{pitch_rate}'>")
+            # 第三遍
+            injected_parts.append(word)
             
-            # 严格按照原版：如果不是最后一个词，才加上词间大停顿 (word_gap)
+            # 如果不是最后一个词，加上词间大停顿
             if i < len(words) - 1:
-                ssml_parts.append(f"<break time='{word_gap_ms}ms'/>")
-            
-        ssml_parts.append("</voice></speak>")
-        ssml_text = "".join(ssml_parts)
+                injected_parts.append(f"</prosody><break time='{word_gap_ms}ms'/><prosody rate='{speed_rate}' pitch='{pitch_rate}'>")
 
-        # 纯内存直接输出数据流，彻底规避 Vercel 的 500 本地存储权限报错
-        communicate = edge_tts.Communicate(text=ssml_text, voice=voice)
+        injected_text = "".join(injected_parts)
+
+        # 把拼接好的注入文本交给 edge-tts，它会自动补齐头尾
+        communicate = edge_tts.Communicate(text=injected_text, voice=voice, rate=speed_rate, pitch=pitch_rate)
+        
         audio_data = b""
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":
