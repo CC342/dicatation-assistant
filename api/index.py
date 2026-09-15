@@ -3,31 +3,28 @@ import edge_tts
 import edge_tts.communicate
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List
 import re
 import random
 from urllib.parse import unquote
-import xml.sax.saxutils
 from mangum import Mangum
 
-# ================= 🚀 终极安全拦截器 =================
-# 只针对 edge_tts，绝对不影响 FastAPI 系统的其他部分
-_orig_escape = xml.sax.saxutils.escape
-
-def _safe_escape(data, entities=None):
-    # 安全的类型检查：只有是字符串且包含我们的标签时，才放行
-    if isinstance(data, str) and ("<break" in data or "</prosody>" in data):
-        return data
-    # 其他所有情况，乖乖走系统原生的转义逻辑
-    if entities is None:
-        return _orig_escape(data)
-    return _orig_escape(data, entities)
-
-# 精准狙击：只替换 edge_tts 内部的 escape，绝不触碰系统全局！
-if hasattr(edge_tts.communicate, "escape"):
+# ================= 🚀 终极防崩溃拦截器 =================
+# 加上了 "_is_patched" 安全锁，彻底解决 Vercel 唤醒时导致的无限死循环 500 错误！
+if not hasattr(edge_tts.communicate, "_is_patched"):
+    _orig_escape = edge_tts.communicate.escape
+    def _safe_escape(data, entities=None):
+        # 只要是我们写的停顿代码，一律免检放行！
+        if isinstance(data, str) and "<break" in data:
+            return data
+        if entities is None:
+            return _orig_escape(data)
+        return _orig_escape(data, entities)
+    
     edge_tts.communicate.escape = _safe_escape
+    edge_tts.communicate._is_patched = True
 # =======================================================
 
 app = FastAPI()
@@ -39,7 +36,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 动态定位 data 目录
 BASE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 
 def natural_sort_key(s):
@@ -95,7 +91,7 @@ def get_content(req: ContentRequest):
     return {"text": "、".join(combined_words)}
 
 
-# ================= 2. 完美的流媒体合成 + 伪装注入 =================
+# ================= 2. 永不崩溃的瀑布流播报引擎 =================
 @app.get("/api/stream")
 async def stream_audio(
     text: str,
@@ -118,29 +114,37 @@ async def stream_audio(
         pause_ms = int(pause_seconds * 1000)
         word_gap_ms = pause_ms + 500
 
-        # 在安全的拦截器护航下，注入停顿代码
-        injected_parts = []
-        for i, word in enumerate(words):
-            injected_parts.append(word)
-            injected_parts.append(f"</prosody><break time='{pause_ms}ms'/><prosody rate='{speed_rate}' pitch='{pitch_rate}'>")
-            
-            injected_parts.append(word)
-            injected_parts.append(f"</prosody><break time='{pause_ms}ms'/><prosody rate='{speed_rate}' pitch='{pitch_rate}'>")
-            
-            injected_parts.append(word)
-            
-            if i < len(words) - 1:
-                injected_parts.append(f"</prosody><break time='{word_gap_ms}ms'/><prosody rate='{speed_rate}' pitch='{pitch_rate}'>")
+        # 核心引擎：将课文拆分成 5个词一组，分批极速生成，防止微软超时断流
+        async def generate():
+            batch_size = 5 
+            for i in range(0, len(words), batch_size):
+                batch_words = words[i:i+batch_size]
+                injected_parts = []
+                
+                for j, word in enumerate(batch_words):
+                    # 极简 SSML 语法，绝对不出错
+                    injected_parts.append(word)
+                    injected_parts.append(f"<break time='{pause_ms}ms'/>")
+                    injected_parts.append(word)
+                    injected_parts.append(f"<break time='{pause_ms}ms'/>")
+                    injected_parts.append(word)
+                    
+                    is_last_word_overall = (i + j) == (len(words) - 1)
+                    if not is_last_word_overall:
+                        injected_parts.append(f"<break time='{word_gap_ms}ms'/>")
 
-        injected_text = "".join(injected_parts)
-
-        communicate = edge_tts.Communicate(text=injected_text, voice=voice, rate=speed_rate, pitch=pitch_rate)
-        audio_data = b""
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                audio_data += chunk["data"]
-
-        return Response(content=audio_data, media_type="audio/mpeg")
+                injected_text = "".join(injected_parts)
+                
+                try:
+                    communicate = edge_tts.Communicate(text=injected_text, voice=voice, rate=speed_rate, pitch=pitch_rate)
+                    async for chunk in communicate.stream():
+                        if chunk["type"] == "audio":
+                            yield chunk["data"] # 拿到一小段声音，立马扔给微信播放！
+                except Exception as e:
+                    print(f"批次合成错误: {e}")
+                    break
+                    
+        return StreamingResponse(generate(), media_type="audio/mpeg")
         
     except Exception as e:
         print(f"音频合成故障: {e}")
