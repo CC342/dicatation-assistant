@@ -6,7 +6,7 @@ from typing import List
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, HTMLResponse # 🚨 引入 HTML 响应
 from pydantic import BaseModel
 from mangum import Mangum
 
@@ -22,6 +22,17 @@ app.add_middleware(
 )
 
 BASE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+ROOT_DIR = os.path.dirname(os.path.dirname(__file__)) # 🚨 定位到项目根目录
+
+# ================= 🚀 新增：强行接管主页，吐出网页版 =================
+@app.get("/")
+def serve_homepage():
+    html_path = os.path.join(ROOT_DIR, "index.html")
+    if os.path.exists(html_path):
+        with open(html_path, "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    return {"detail": "网页版未找到，请确保 index.html 放在了项目的根目录！"}
+# ====================================================================
 
 def natural_sort_key(s):
     return [(0, int(text)) if text.isdigit() else (1, text.lower()) for text in re.split(r'(\d+)', s)]
@@ -71,12 +82,8 @@ def get_content(req: ContentRequest):
     return {"text": "、".join(combined_words)}
 
 
-# ================= 🚀 终极杀招：纯 Python MP3 帧拼接 =================
+# ================= 🚀 保留成功的纯 Python MP3 物理帧拼接 =================
 def get_silence_mp3(duration_ms: int) -> bytes:
-    """
-    生成纯物理静音的 MP3 数据流。
-    标准 MP3 帧 (MPEG-2 Layer III, 24kHz, 32kbps, Mono) 单帧大小 72 bytes，播放 24 ms。
-    """
     frame_hex = "fff344c400000003480000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
     silent_frame = bytes.fromhex(frame_hex)
     num_frames = duration_ms // 24
@@ -91,9 +98,6 @@ async def stream_audio(
     pitch: int = -15,
     shuffle_bool: bool = False
 ):
-    print(f"========== [DEBUG LOG] 收到物理流媒体请求 ==========")
-    print(f"参数: text={text[:10]}..., voice={voice}, speed={speed}, pause={pause_seconds}, pitch={pitch}")
-    
     try:
         raw_words = re.split(r'[,，\s、\n\r]+', text)
         words = [w.strip() for w in raw_words if w.strip()]
@@ -105,19 +109,13 @@ async def stream_audio(
         speed_rate = f"{int((speed - 1.0) * 100):+d}%"
         pitch_rate = f"{int(pitch):+d}Hz"
         
-        # 预先准备好 1.5 秒和 2.0 秒的“纯静音积木”
         pause_ms = int(pause_seconds * 1000)
         word_gap_ms = pause_ms + 500
         silence_gap = get_silence_mp3(pause_ms)
         word_gap = get_silence_mp3(word_gap_ms)
 
-        print(f"[INFO] 准备处理 {len(words)} 个词，使用纯净 MP3 拼接...")
-
         async def generate():
             for i, word in enumerate(words):
-                print(f"[DEBUG] 正在向微软请求纯净发音: {word}")
-                
-                # 堂堂正正传纯文本，绝不带任何标签，微软绝对不会拒收！
                 communicate = edge_tts.Communicate(text=word, voice=voice, rate=speed_rate, pitch=pitch_rate)
                 word_audio = b""
                 
@@ -130,22 +128,17 @@ async def stream_audio(
                     continue
                     
                 if not word_audio:
-                    print(f"[WARN] 词语 '{word}' 未获取到音频，跳过。")
                     continue
                     
-                # 就像搭积木一样物理拼接音频
-                yield word_audio     # 第一遍
-                yield silence_gap    # 停顿
-                yield word_audio     # 第二遍
-                yield silence_gap    # 停顿
-                yield word_audio     # 第三遍
+                yield word_audio     
+                yield silence_gap    
+                yield word_audio     
+                yield silence_gap    
+                yield word_audio     
                 
-                # 若不是最后一个词，加上较长的词间停顿
                 if i < len(words) - 1:
                     yield word_gap
                     
-            print("[DEBUG] 全部音频拼接流传输完毕！")
-
         return StreamingResponse(generate(), media_type="audio/mpeg")
         
     except Exception as e:
