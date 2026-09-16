@@ -1,15 +1,36 @@
 import os
-import edge_tts
+import re
+import random
+from urllib.parse import unquote
+from typing import List
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import List
-import re
-import random
-from urllib.parse import unquote
-import xml.sax.saxutils
 from mangum import Mangum
+
+import edge_tts
+import edge_tts.communicate
+import xml.sax.saxutils
+
+# ================= 🚀 终极防死循环 & 纯净 SSML 补丁 =================
+# 核心绝招：直接引用 Python 官方最底层的 escape，绝不引用 edge_tts 自身的 escape！
+# 这样就算 Vercel 唤醒一万次，也绝对不可能发生“左脚踩右脚”的死循环！
+_base_escape = xml.sax.saxutils.escape
+
+def _safe_escape(data, entities=None):
+    # 如果是我们自己拼装的 SSML 停顿标签，直接放行，骗过微软
+    if isinstance(data, str) and ("<speak" in data or "<break" in data or "<prosody" in data):
+        return data
+    # 否则，调用系统【最原始】的转义函数
+    if entities is not None:
+        return _base_escape(data, entities)
+    return _base_escape(data)
+
+# 强行替换 edge_tts 内部的 escape 为我们的安全版本
+edge_tts.communicate.escape = _safe_escape
+# =======================================================================
 
 app = FastAPI()
 
@@ -70,19 +91,7 @@ def get_content(req: ContentRequest):
     return {"text": "、".join(combined_words)}
 
 
-# ================= 🚀 终极杀招：自定义安全的 SSML 引擎 =================
-class DirectSSMLCommunicate(edge_tts.Communicate):
-    """继承官方类，无损注入自定义 SSML，绝不影响全局环境"""
-    def __init__(self, custom_ssml: str, voice: str):
-        # 🚨 致命 Bug 修复处：必须传入 voice，否则 WebSocket 握手头和 SSML 内容不一致会被直接拉闸！
-        super().__init__(text="dummy_text", voice=voice)
-        self.custom_ssml = custom_ssml
-        
-    def _generate_ssml(self) -> str:
-        return self.custom_ssml
-# =======================================================================
-
-
+# ================= 带 Log 的流媒体引擎 =================
 @app.get("/api/stream")
 async def stream_audio(
     text: str,
@@ -92,56 +101,69 @@ async def stream_audio(
     pitch: int = -15,
     shuffle_bool: bool = False
 ):
+    print(f"========== [DEBUG LOG] 收到流媒体请求 ==========")
+    print(f"请求参数: text={text}, voice={voice}, speed={speed}, pause={pause_seconds}, pitch={pitch}")
+    
     try:
         raw_words = re.split(r'[,，\s、\n\r]+', text)
         words = [w.strip() for w in raw_words if w.strip()]
         if not words:
+            print("[ERROR] 词语列表为空")
             raise HTTPException(status_code=400, detail="词语列表为空")
         if shuffle_bool:
             random.shuffle(words)
 
-        # 严格规范参数格式，确保携带正确的符号 (+ or -) 给微软
-        speed_rate = f"{int((speed - 1.0) * 100):+d}%" 
+        speed_rate = f"{int((speed - 1.0) * 100):+d}%"
         pitch_rate = f"{int(pitch):+d}Hz"
         pause_ms = int(pause_seconds * 1000)
         word_gap_ms = pause_ms + 500
+
+        print(f"[INFO] 解析成功: 共有 {len(words)} 个词，准备分批生成。")
 
         async def generate():
             batch_size = 5
             for i in range(0, len(words), batch_size):
                 batch_words = words[i:i+batch_size]
+                print(f"\n[DEBUG] 正在处理批次: {batch_words}")
                 
-                # 拼装最标准、严格的微软 SSML 格式
-                ssml = f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="zh-CN">'
-                ssml += f'<voice name="{voice}">'
-                ssml += f'<prosody rate="{speed_rate}" pitch="{pitch_rate}" volume="+0%">'
-                
+                # 直接将标签与真实单词拼接
+                injected_parts = []
                 for j, word in enumerate(batch_words):
-                    safe_word = xml.sax.saxutils.escape(word) # 安全转义，防乱码
-                    ssml += f'{safe_word}<break time="{pause_ms}ms"/>'
-                    ssml += f'{safe_word}<break time="{pause_ms}ms"/>'
-                    ssml += f'{safe_word}'
+                    safe_word = _base_escape(word) # 安全转义真实单词
+                    injected_parts.append(safe_word)
+                    injected_parts.append(f"<break time='{pause_ms}ms'/>")
+                    injected_parts.append(safe_word)
+                    injected_parts.append(f"<break time='{pause_ms}ms'/>")
+                    injected_parts.append(safe_word)
                     
                     is_last_word_overall = (i + j) == (len(words) - 1)
                     if not is_last_word_overall:
-                        ssml += f'<break time="{word_gap_ms}ms"/>'
+                        injected_parts.append(f"<break time='{word_gap_ms}ms'/>")
                         
-                ssml += '</prosody></voice></speak>'
-                
+                injected_text = "".join(injected_parts)
+                print(f"[DEBUG] 即将发送给 edge-tts 的文本:\n{injected_text}")
+
                 try:
-                    # 调用我们安全的自定义引擎
-                    tts = DirectSSMLCommunicate(custom_ssml=ssml, voice=voice)
-                    async for chunk in tts.stream():
+                    # 堂堂正正地使用自带类，不再用任何 dummy
+                    communicate = edge_tts.Communicate(text=injected_text, voice=voice, rate=speed_rate, pitch=pitch_rate)
+                    print(f"[DEBUG] Communicate 实例化成功，准备建立流...")
+                    
+                    chunk_count = 0
+                    async for chunk in communicate.stream():
                         if chunk["type"] == "audio":
+                            chunk_count += 1
                             yield chunk["data"]
+                            
+                    print(f"[DEBUG] 批次处理完毕，成功下发了 {chunk_count} 个音频数据块！")
+                    
                 except Exception as e:
-                    print(f"Batch TTS Error: {e}")
+                    print(f"[ERROR] 批次合成严重报错: {e}")
                     break
 
         return StreamingResponse(generate(), media_type="audio/mpeg")
         
     except Exception as e:
-        print(f"音频合成故障: {e}")
+        print(f"[FATAL ERROR] 音频合成整体故障: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 handler = Mangum(app)
