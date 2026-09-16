@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>✍️ 听写助手 - 网页版</title>
+    <style>
+        /* 完美复刻你的 iOS Glass CSS */
+        body {
+            background-image: url('https://images.unsplash.com/photo-1504309092620-4d0ec726efa4?auto=format&fit=crop&w=1920&q=80');
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        #main-title {
+            text-align: center;
+            margin-bottom: 22px;
+        }
+
+        #main-title h1 {
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", "PingFang SC", sans-serif;
+            color: #ffffff;
+            font-size: 3.4rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            text-shadow: 0px 4px 15px rgba(0, 0, 0, 0.15);
+            margin: 0 0 4px 0;
+        }
+
+        #main-title p {
+            color: #edf2f7;
+            text-shadow: 0px 2px 8px rgba(0, 0, 0, 0.2);
+            font-size: 1.05rem;
+            font-weight: 600;
+            margin-bottom: 25px;
+        }
+
+        .ios-glass {
+            background: rgba(255, 255, 255, 0.25);
+            border-radius: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.6);
+            box-shadow: 0 10px 35px rgba(0, 0, 0, 0.05);
+            padding: 24px;
+            margin-bottom: 16px;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+
+        .ios-glass h3 { margin-top: 0; color: #1d1d1f; }
+        
+        label {
+            display: block;
+            font-weight: 600;
+            font-size: 0.9rem;
+            margin-bottom: 8px;
+            margin-top: 15px;
+            color: #1d1d1f;
+        }
+
+        select, textarea, input[type="text"] {
+            width: 100%;
+            background: rgba(255, 255, 255, 0.6);
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            padding: 10px;
+            font-size: 14px;
+            box-sizing: border-box;
+            outline: none;
+            transition: all 0.3s ease;
+        }
+
+        select:focus, textarea:focus, input[type="text"]:focus {
+            background: rgba(255, 255, 255, 0.9);
+            border-color: #0071e3;
+        }
+
+        .apple-btn {
+            background: linear-gradient(135deg, #0071e3 0%, #00c6ff 100%);
+            color: white;
+            border: none;
+            border-radius: 14px;
+            font-weight: 600;
+            font-size: 1.1rem;
+            box-shadow: 0 4px 15px rgba(0, 113, 227, 0.25);
+            height: 50px;
+            width: 100%;
+            cursor: pointer;
+            transition: transform 0.1s;
+        }
+
+        .apple-btn:active { transform: scale(0.98); }
+
+        .minor-btn {
+            background: rgba(255, 255, 255, 0.8);
+            color: #0071e3;
+            border: 1px solid rgba(0, 113, 227, 0.2);
+            border-radius: 12px;
+            padding: 10px 15px;
+            cursor: pointer;
+            font-weight: 600;
+            margin-top: 10px;
+            width: 100%;
+        }
+
+        .row { display: flex; gap: 20px; }
+        .col { flex: 1; min-width: 0; }
+
+        input[type="range"] { width: 100%; margin-bottom: 10px; }
+        .slider-val { color: #0071e3; font-weight: bold; }
+        
+        .alert-box {
+            background: rgba(255, 204, 0, 0.3);
+            border-radius: 10px;
+            padding: 10px;
+            font-size: 0.85rem;
+            margin-top: 10px;
+        }
+
+        @media (max-width: 768px) {
+            .row { flex-direction: column; }
+            #main-title h1 { font-size: 2.2rem; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div id="main-title">
+        <h1>✍️ 听写助手</h1>
+        <p>默默积累，静待花开之时！</p>
+    </div>
+
+    <!-- 顶端：创建提示 -->
+    <details class="ios-glass" style="cursor: pointer;">
+        <summary style="font-weight: bold; font-size: 1.1rem; outline: none;">➕ 添加年级 / 新课时 (点击查看说明)</summary>
+        <div class="alert-box">
+            ⚠️ <b>系统架构说明：</b>当前运行在极速 Serverless 云端，处于只读保护状态。如需新增年级或 TXT 课时，请直接在您的 GitHub 仓库的 <code>data</code> 文件夹中进行添加。添加完成后，云端会自动同步更新并在此处显示！
+        </div>
+    </details>
+
+    <div class="row">
+        <!-- 左侧栏 -->
+        <div class="col">
+            <div class="ios-glass">
+                <h3>🗂️ 课本源选择</h3>
+                
+                <label>选择年级</label>
+                <select id="gradeSelect"></select>
+
+                <label>勾选课时（按住 Ctrl / Cmd 键可多选）</label>
+                <select id="fileSelect" multiple size="6"></select>
+                
+                <button class="minor-btn" id="btnSelectAll">✨ 一键选中当前年级全部课时</button>
+            </div>
+
+            <div class="ios-glass">
+                <h3>📝 听写字词表</h3>
+                <textarea id="inputText" rows="6" placeholder="选中的课时字词会自动合并展现到这里..."></textarea>
+                <label style="display: flex; align-items: center; gap: 8px; margin-top: 15px;">
+                    <input type="checkbox" id="shuffleToggle" style="width: auto;"> 🔀 开启打乱词语顺序
+                </label>
+            </div>
+        </div>
+
+        <!-- 右侧栏 -->
+        <div class="col">
+            <div class="ios-glass">
+                <h3>⚙️ 老师发音微调</h3>
+                
+                <label>选择语文老师声线</label>
+                <select id="voiceSelect">
+                    <option value="zh-CN-XiaoxiaoNeural">✅ 稳过女声：标准普通话 (晓晓 - 默认)</option>
+                    <option value="zh-CN-YunxiNeural">✅ 稳过男声：自然故事男老师 (云希)</option>
+                    <option value="zh-CN-XiaoyiNeural">✅ 稳过女声：生动小说女老师 (晓伊)</option>
+                    <option value="zh-CN-YunjianNeural">✅ 稳过男声：沉稳老教师 (云健)</option>
+                    <option value="zh-CN-YunyangNeural">✅ 稳过男声：新闻纪录片 (云扬)</option>
+                </select>
+
+                <label>声音厚度 (Hz): <span class="slider-val" id="pitchVal">-15</span></label>
+                <input type="range" id="pitchSlider" min="-50" max="30" value="-15" step="1">
+
+                <label>重复间隔 (秒): <span class="slider-val" id="pauseVal">1.5</span></label>
+                <input type="range" id="pauseSlider" min="1.0" max="4.0" value="1.5" step="0.1">
+
+                <label>朗读语速: <span class="slider-val" id="speedVal">0.85</span></label>
+                <input type="range" id="speedSlider" min="0.6" max="1.0" value="0.85" step="0.05">
+
+                <button class="apple-btn" id="btnGenerate" style="margin-top: 20px;">📢 立即生成听写音频</button>
+            </div>
+
+            <div class="ios-glass">
+                <h3>🎧 听写音频输出</h3>
+                <audio id="audioPlayer" controls style="width: 100%; outline: none; border-radius: 30px;"></audio>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // 同步滑块的数值显示
+    ['pitch', 'pause', 'speed'].forEach(id => {
+        const slider = document.getElementById(id + 'Slider');
+        const val = document.getElementById(id + 'Val');
+        slider.addEventListener('input', () => val.innerText = slider.value);
+    });
+
+    const gradeSelect = document.getElementById('gradeSelect');
+    const fileSelect = document.getElementById('fileSelect');
+    const inputText = document.getElementById('inputText');
+
+    // 初始化获取年级
+    async function init() {
+        const res = await fetch('/api/grades');
+        const data = await res.json();
+        gradeSelect.innerHTML = data.grades.map(g => `<option value="${g}">${g}</option>`).join('');
+        if (data.grades.length > 0) fetchFiles();
+    }
+
+    // 获取课时
+    async function fetchFiles() {
+        const grade = gradeSelect.value;
+        const res = await fetch(`/api/files/${encodeURIComponent(grade)}`);
+        const data = await res.json();
+        fileSelect.innerHTML = data.files.map(f => `<option value="${f}">${f}</option>`).join('');
+        if (data.files.length > 0) {
+            fileSelect.options[0].selected = true; // 默认选中第一个
+            fetchContent();
+        } else {
+            inputText.value = "";
+        }
+    }
+
+    // 获取文本内容
+    async function fetchContent() {
+        const grade = gradeSelect.value;
+        const selectedFiles = Array.from(fileSelect.selectedOptions).map(opt => opt.value);
+        if (selectedFiles.length === 0) {
+            inputText.value = "";
+            return;
+        }
+        const res = await fetch('/api/content', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ grade: grade, files: selectedFiles })
+        });
+        const data = await res.json();
+        inputText.value = data.text;
+    }
+
+    // 绑定事件
+    gradeSelect.addEventListener('change', fetchFiles);
+    fileSelect.addEventListener('change', fetchContent);
+    
+    // 一键选中
+    document.getElementById('btnSelectAll').addEventListener('click', () => {
+        Array.from(fileSelect.options).forEach(opt => opt.selected = true);
+        fetchContent();
+    });
+
+    // 生成播放音频
+    document.getElementById('btnGenerate').addEventListener('click', () => {
+        const text = inputText.value.trim();
+        if (!text) return alert("当前输入框是空的，没有可听写的词语！");
+        
+        const btn = document.getElementById('btnGenerate');
+        const originalText = btn.innerText;
+        btn.innerText = "⏳ 音频缓冲中...";
+
+        const voice = document.getElementById('voiceSelect').value;
+        const speed = document.getElementById('speedSlider').value;
+        const pause = document.getElementById('pauseSlider').value;
+        const pitch = document.getElementById('pitchSlider').value;
+        const shuffle = document.getElementById('shuffleToggle').checked;
+
+        // 直接调用同域下的 Vercel API
+        const url = `/api/stream?text=${encodeURIComponent(text)}&voice=${voice}&speed=${speed}&pause_seconds=${pause}&pitch=${pitch}&shuffle_bool=${shuffle}`;
+        
+        const player = document.getElementById('audioPlayer');
+        player.src = url;
+        
+        player.play().then(() => {
+            btn.innerText = originalText;
+        }).catch(err => {
+            btn.innerText = originalText;
+            console.error("播放被拦截，可能是浏览器自动播放限制", err);
+        });
+    });
+
+    init();
+</script>
+
+</body>
+</html>
