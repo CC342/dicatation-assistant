@@ -58,7 +58,7 @@
 
         .ios-glass h3 { margin-top: 0; color: #1d1d1f; }
         
-        label {
+        label.title-label {
             display: block;
             font-weight: 600;
             font-size: 0.9rem;
@@ -83,6 +83,45 @@
             background: rgba(255, 255, 255, 0.9);
             border-color: #0071e3;
         }
+
+        /* 🚨 新增：完美复刻小程序的“课时多选列表”样式 */
+        .file-list-container {
+            max-height: 220px;
+            overflow-y: auto;
+            background: rgba(255, 255, 255, 0.5);
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            padding: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .file-item {
+            display: flex;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.6);
+            padding: 10px 14px;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .file-item:hover {
+            background: rgba(255, 255, 255, 0.9);
+            transform: translateY(-1px);
+        }
+
+        .file-item input[type="checkbox"] {
+            margin-right: 12px;
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+            accent-color: #0071e3; /* iOS 主题蓝 */
+        }
+        /* ------------------------------------------- */
 
         .apple-btn {
             background: linear-gradient(135deg, #0071e3 0%, #00c6ff 100%);
@@ -154,11 +193,14 @@
             <div class="ios-glass">
                 <h3>🗂️ 课本源选择</h3>
                 
-                <label>选择年级</label>
+                <label class="title-label">选择年级</label>
                 <select id="gradeSelect"></select>
 
-                <label>勾选课时（按住 Ctrl / Cmd 键可多选）</label>
-                <select id="fileSelect" multiple size="6"></select>
+                <!-- 🚨 修改处：用带复选框的滚动列表替换了原生 select -->
+                <label class="title-label">勾选课时（点击即可直接多选/取消）</label>
+                <div id="fileListContainer" class="file-list-container">
+                    <!-- 动态生成的课时复选框会在这里 -->
+                </div>
                 
                 <button class="minor-btn" id="btnSelectAll">✨ 一键选中当前年级全部课时</button>
             </div>
@@ -166,8 +208,8 @@
             <div class="ios-glass">
                 <h3>📝 听写字词表</h3>
                 <textarea id="inputText" rows="6" placeholder="选中的课时字词会自动合并展现到这里..."></textarea>
-                <label style="display: flex; align-items: center; gap: 8px; margin-top: 15px;">
-                    <input type="checkbox" id="shuffleToggle" style="width: auto;"> 🔀 开启打乱词语顺序
+                <label style="display: flex; align-items: center; gap: 8px; margin-top: 15px; cursor: pointer; color: #1d1d1f; font-weight: 600;">
+                    <input type="checkbox" id="shuffleToggle" style="width: 18px; height: 18px; cursor: pointer;"> 🔀 开启打乱词语顺序
                 </label>
             </div>
         </div>
@@ -177,7 +219,7 @@
             <div class="ios-glass">
                 <h3>⚙️ 老师发音微调</h3>
                 
-                <label>选择语文老师声线</label>
+                <label class="title-label">选择语文老师声线</label>
                 <select id="voiceSelect">
                     <option value="zh-CN-XiaoxiaoNeural">✅ 稳过女声：标准普通话 (晓晓 - 默认)</option>
                     <option value="zh-CN-YunxiNeural">✅ 稳过男声：自然故事男老师 (云希)</option>
@@ -186,13 +228,13 @@
                     <option value="zh-CN-YunyangNeural">✅ 稳过男声：新闻纪录片 (云扬)</option>
                 </select>
 
-                <label>声音厚度 (Hz): <span class="slider-val" id="pitchVal">-15</span></label>
+                <label class="title-label">声音厚度 (Hz): <span class="slider-val" id="pitchVal">-15</span></label>
                 <input type="range" id="pitchSlider" min="-50" max="30" value="-15" step="1">
 
-                <label>重复间隔 (秒): <span class="slider-val" id="pauseVal">1.5</span></label>
+                <label class="title-label">重复间隔 (秒): <span class="slider-val" id="pauseVal">1.5</span></label>
                 <input type="range" id="pauseSlider" min="1.0" max="4.0" value="1.5" step="0.1">
 
-                <label>朗读语速: <span class="slider-val" id="speedVal">0.85</span></label>
+                <label class="title-label">朗读语速: <span class="slider-val" id="speedVal">0.85</span></label>
                 <input type="range" id="speedSlider" min="0.6" max="1.0" value="0.85" step="0.05">
 
                 <button class="apple-btn" id="btnGenerate" style="margin-top: 20px;">📢 立即生成听写音频</button>
@@ -215,7 +257,7 @@
     });
 
     const gradeSelect = document.getElementById('gradeSelect');
-    const fileSelect = document.getElementById('fileSelect');
+    const fileListContainer = document.getElementById('fileListContainer');
     const inputText = document.getElementById('inputText');
 
     // 初始化获取年级
@@ -226,28 +268,39 @@
         if (data.grades.length > 0) fetchFiles();
     }
 
-    // 获取课时
+    // 获取课时，并渲染为多选框列表
     async function fetchFiles() {
         const grade = gradeSelect.value;
         const res = await fetch(`/api/files/${encodeURIComponent(grade)}`);
         const data = await res.json();
-        fileSelect.innerHTML = data.files.map(f => `<option value="${f}">${f}</option>`).join('');
+        
         if (data.files.length > 0) {
-            fileSelect.options[0].selected = true; // 默认选中第一个
+            // 渲染复选框（包裹在 label 中实现点击整行即可勾选）
+            fileListContainer.innerHTML = data.files.map((f, index) => `
+                <label class="file-item">
+                    <input type="checkbox" value="${f}" ${index === 0 ? 'checked' : ''}> 
+                    ${f}
+                </label>
+            `).join('');
             fetchContent();
         } else {
+            fileListContainer.innerHTML = '<div style="color: #666; font-size: 0.9rem; text-align: center; padding: 10px;">该年级下暂无课时文本</div>';
             inputText.value = "";
         }
     }
 
-    // 获取文本内容
+    // 获取选中课时的文本内容
     async function fetchContent() {
         const grade = gradeSelect.value;
-        const selectedFiles = Array.from(fileSelect.selectedOptions).map(opt => opt.value);
+        // 获取所有被勾选的复选框
+        const selectedCheckboxes = document.querySelectorAll('#fileListContainer input[type="checkbox"]:checked');
+        const selectedFiles = Array.from(selectedCheckboxes).map(cb => cb.value);
+        
         if (selectedFiles.length === 0) {
             inputText.value = "";
             return;
         }
+        
         const res = await fetch('/api/content', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -259,11 +312,13 @@
 
     // 绑定事件
     gradeSelect.addEventListener('change', fetchFiles);
-    fileSelect.addEventListener('change', fetchContent);
+    // 利用事件委托监听列表中任意复选框的变化
+    fileListContainer.addEventListener('change', fetchContent);
     
     // 一键选中
     document.getElementById('btnSelectAll').addEventListener('click', () => {
-        Array.from(fileSelect.options).forEach(opt => opt.selected = true);
+        const checkboxes = document.querySelectorAll('#fileListContainer input[type="checkbox"]');
+        checkboxes.forEach(cb => cb.checked = true);
         fetchContent();
     });
 
@@ -274,7 +329,7 @@
         
         const btn = document.getElementById('btnGenerate');
         const originalText = btn.innerText;
-        btn.innerText = "⏳ 音频缓冲中...";
+        btn.innerText = "⏳ 音频极速缓冲中...";
 
         const voice = document.getElementById('voiceSelect').value;
         const speed = document.getElementById('speedSlider').value;
