@@ -1,0 +1,71 @@
+<view class="container">
+  <view class="header">
+    <text class="title">✍️ 专属听写</text>
+    <text class="subtitle">默默积累，静待花开之时！</text>
+  </view>
+
+  <!-- 第一区：选课本 (年级单选 + 课时横向胶囊多选) -->
+  <view class="ios-glass">
+    <view class="section-title">📂 课本源选择</view>
+    
+    <!-- 年级单选 -->
+    <picker bindchange="onGradeChange" value="{{gradeIndex}}" range="{{grades}}">
+      <view class="picker-btn">
+        📚 选择年级: {{grades[gradeIndex] || '加载中...'}}
+      </view>
+    </picker>
+
+    <!-- 🚨 课时横向标签多选 -->
+    <view class="file-tags-container" wx:if="{{fileObjList.length > 0}}">
+      <view 
+        wx:for="{{fileObjList}}" 
+        wx:key="name" 
+        class="file-tag {{item.selected ? 'active' : ''}}" 
+        data-index="{{index}}" 
+        bindtap="toggleFileSelection">
+        {{item.name}}
+      </view>
+    </view>
+    <view class="empty-tip" wx:else>该目录下没有课时文本</view>
+  </view>
+
+  <!-- 第二区：听写字词微调 -->
+  <view class="ios-glass">
+    <view class="section-title">📝 听写字词表</view>
+    <textarea class="glass-input" bindinput="onInputText" placeholder="在此输入或从上方点击文件加载..." value="{{text}}"></textarea>
+    
+    <view class="switch-row">
+      <text>🔀 打乱词语顺序</text>
+      <switch color="#0071e3" checked="{{shuffleBool}}" bindchange="onShuffleChange" />
+    </view>
+  </view>
+
+  <!-- 第三区：语音引擎配置 -->
+  <view class="ios-glass">
+    <view class="section-title">老师发音微调</view>
+    
+    <picker bindchange="onVoiceChange" value="{{voiceIndex}}" range="{{voiceArray}}" range-key="name">
+      <view class="picker-btn">🗣️ 发音老师: {{voiceArray[voiceIndex].name}}</view>
+    </picker>
+
+    <view class="slider-group">
+      <text>⏱️ 每个词停顿 (秒): {{pauseSeconds}}</text>
+      <slider min="1" max="5" step="0.5" value="1.5" activeColor="#0071e3" bindchange="onPauseChange"/>
+    </view>
+    <view class="slider-group">
+      <text>🏃‍♂️ 朗读语速: {{speed}}</text>
+      <slider min="0.6" max="1.0" step="0.05" value="0.85" activeColor="#0071e3" bindchange="onSpeedChange"/>
+    </view>
+
+    <button class="apple-btn" bindtap="generateAudio" loading="{{isLoading}}">📢 立即生成听写音频</button>
+  </view>
+
+  <!-- 第四区：播放控制器 -->
+  <view class="ios-glass" wx:if="{{audioUrl}}">
+    <view class="section-title">🎧 听写音频已就绪</view>
+    <view class="player-controls">
+      <button class="minor-btn" bindtap="playAudio">{{isPlaying ? '⏸ 暂停' : '▶️ 播放'}}</button>
+      <button class="minor-btn" bindtap="stopAudio">⏹ 停止</button>
+    </view>
+  </view>
+</view>
