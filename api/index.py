@@ -1,7 +1,7 @@
 import os
 import re
 import random
-import asyncio  # 🚨 核心：引入异步并发库
+import asyncio
 from urllib.parse import unquote
 from typing import List
 
@@ -80,14 +80,34 @@ def get_content(req: ContentRequest):
                 break
     return {"text": "、".join(combined_words)}
 
+
+# ================= 🚀 音质拯救计划：码率对齐与清洗 =================
+
+def clean_mp3_data(data: bytes) -> bytes:
+    """
+    清洗 MP3 数据，剥离头尾的文本标签，彻底消灭“刺啦”杂音。
+    """
+    res = bytearray(data)
+    # 剥离开头的 ID3v2 标签
+    while res.startswith(b"ID3") and len(res) >= 10:
+        size = (res[6] << 21) | (res[7] << 14) | (res[8] << 7) | res[9]
+        res = res[10 + size:]
+    # 剥离结尾的 ID3v1 标签
+    if len(res) >= 128 and res[-128:-125] == b"TAG":
+        res = res[:-128]
+    return bytes(res)
+
 def get_silence_mp3(duration_ms: int) -> bytes:
-    frame_hex = "fff344c400000003480000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    """
+    生成 100% 匹配微软输出的 48kbps, 24kHz 单声道静音帧。
+    杜绝播放器因来回切换码率而导致的微小卡顿。
+    """
+    # 帧大小 = 144 bytes，时长 = 24ms
+    frame_hex = "fff364c40000000348" + "00" * 135
     silent_frame = bytes.fromhex(frame_hex)
     num_frames = duration_ms // 24
     return silent_frame * num_frames
 
-
-# ================= 🚀 终极大招：全异步并发获取 + 内存极速拼装 =================
 @app.get("/api/stream")
 async def stream_audio(
     text: str,
@@ -113,7 +133,6 @@ async def stream_audio(
         silence_gap = get_silence_mp3(pause_ms)
         word_gap = get_silence_mp3(word_gap_ms)
 
-        # 🚨 独立封装单次请求函数
         async def fetch_word(word: str) -> bytes:
             communicate = edge_tts.Communicate(text=word, voice=voice, rate=speed_rate, pitch=pitch_rate)
             audio_data = bytearray()
@@ -123,14 +142,15 @@ async def stream_audio(
                         audio_data.extend(chunk["data"])
             except Exception as e:
                 print(f"[ERROR] 获取词语 '{word}' 失败: {e}")
-            return bytes(audio_data)
+            
+            # 🚨 在这里将杂音元凶清洗干净！
+            return clean_mp3_data(bytes(audio_data))
 
-        # 🚨 核心魔法：使用 asyncio.gather 瞬间并发所有词语请求！
-        # 无论多少个词，总耗时都被压缩到 0.5 秒左右
+        # 异步并发获取所有发音
         tasks = [fetch_word(word) for word in words]
         word_audios = await asyncio.gather(*tasks)
 
-        # 瞬间在内存中像搭积木一样拼装
+        # 在内存中完美无缝拼装
         final_audio = bytearray()
         for i, word_audio in enumerate(word_audios):
             if not word_audio:
@@ -144,7 +164,6 @@ async def stream_audio(
             if i < len(word_audios) - 1:
                 final_audio.extend(word_gap)
                 
-        # 以标准 Response 返回，自带 Content-Length，彻底治好小程序的强迫症
         return Response(content=bytes(final_audio), media_type="audio/mpeg")
         
     except Exception as e:
