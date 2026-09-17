@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>✍️ 听写助手 - 网页版</title>
     <style>
-        /* 完美复刻你的 iOS Glass CSS */
+        /* 完美复刻 iOS Glass CSS */
         body {
             background-image: url('https://images.unsplash.com/photo-1504309092620-4d0ec726efa4?auto=format&fit=crop&w=1920&q=80');
             background-size: cover;
@@ -84,10 +84,10 @@
             border-color: #0071e3;
         }
 
-        /* 🚨 核心改造：平铺铺开的标签按钮（去掉了全部滚动条和高度限制） */
+        /* 平铺铺开的标签按钮 */
         .file-list-container {
             display: flex;
-            flex-wrap: wrap; /* 允许自动换行铺满 */
+            flex-wrap: wrap; 
             gap: 10px;
             margin-top: 10px;
         }
@@ -102,11 +102,11 @@
             font-weight: 600;
             transition: all 0.2s ease;
             color: #1d1d1f;
-            user-select: none; /* 防止双击时选中文本 */
+            user-select: none; 
         }
 
         .file-tag input[type="checkbox"] {
-            display: none; /* 彻底隐藏原本的复选框方块 */
+            display: none; 
         }
 
         .file-tag:hover {
@@ -114,14 +114,12 @@
             transform: translateY(-1px);
         }
 
-        /* 选中后的完美苹果蓝高亮状态 */
         .file-tag.selected {
             background: linear-gradient(135deg, #0071e3 0%, #00c6ff 100%);
             color: white;
             border-color: transparent;
             box-shadow: 0 4px 10px rgba(0, 113, 227, 0.25);
         }
-        /* ------------------------------------------- */
 
         .apple-btn {
             background: linear-gradient(135deg, #0071e3 0%, #00c6ff 100%);
@@ -156,14 +154,6 @@
 
         input[type="range"] { width: 100%; margin-bottom: 10px; }
         .slider-val { color: #0071e3; font-weight: bold; }
-        
-        .alert-box {
-            background: rgba(255, 204, 0, 0.3);
-            border-radius: 10px;
-            padding: 10px;
-            font-size: 0.85rem;
-            margin-top: 10px;
-        }
 
         @media (max-width: 768px) {
             .row { flex-direction: column; }
@@ -179,15 +169,7 @@
         <p>默默积累，静待花开之时！</p>
     </div>
 
-    <details class="ios-glass" style="cursor: pointer;">
-        <summary style="font-weight: bold; font-size: 1.1rem; outline: none;">➕ 添加年级 / 新课时 (点击查看说明)</summary>
-        <div class="alert-box">
-            ⚠️ <b>系统架构说明：</b>当前运行在极速 Serverless 云端，处于只读保护状态。如需新增年级或 TXT 课时，请直接在您的 GitHub 仓库的 <code>data</code> 文件夹中进行添加。添加完成后，云端会自动同步更新并在此处显示！
-        </div>
-    </details>
-
     <div class="row">
-        <!-- 左侧栏 -->
         <div class="col">
             <div class="ios-glass">
                 <h3>🗂️ 课本源选择</h3>
@@ -197,8 +179,7 @@
 
                 <label class="title-label">全部课时（点击标签直接多选或取消）</label>
                 <div id="fileListContainer" class="file-list-container">
-                    <!-- 平铺的标签按钮会在这里生成 -->
-                </div>
+                    </div>
                 
                 <button class="minor-btn" id="btnSelectAll">✨ 一键全选当前年级课时</button>
             </div>
@@ -212,7 +193,6 @@
             </div>
         </div>
 
-        <!-- 右侧栏 -->
         <div class="col">
             <div class="ios-glass">
                 <h3>⚙️ 老师发音微调</h3>
@@ -341,7 +321,7 @@
         const pitch = document.getElementById('pitchSlider').value;
         const shuffle = document.getElementById('shuffleToggle').checked;
 
-        // 调用 Vercel API
+        // 调用 API
         const url = `/api/stream?text=${encodeURIComponent(text)}&voice=${voice}&speed=${speed}&pause_seconds=${pause}&pitch=${pitch}&shuffle_bool=${shuffle}`;
         
         const player = document.getElementById('audioPlayer');
