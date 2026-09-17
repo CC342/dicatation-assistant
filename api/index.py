@@ -6,7 +6,7 @@ from typing import List
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, HTMLResponse  # 🚨 换用标准的 Response
+from fastapi.responses import StreamingResponse, HTMLResponse # 🚨 引入 HTML 响应
 from pydantic import BaseModel
 from mangum import Mangum
 
@@ -22,15 +22,17 @@ app.add_middleware(
 )
 
 BASE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
-ROOT_DIR = os.path.dirname(os.path.dirname(__file__))
+ROOT_DIR = os.path.dirname(os.path.dirname(__file__)) # 🚨 定位到项目根目录
 
+# ================= 🚀 新增：强行接管主页，吐出网页版 =================
 @app.get("/")
 def serve_homepage():
     html_path = os.path.join(ROOT_DIR, "index.html")
     if os.path.exists(html_path):
         with open(html_path, "r", encoding="utf-8") as f:
             return HTMLResponse(content=f.read())
-    return {"detail": "网页版未找到"}
+    return {"detail": "网页版未找到，请确保 index.html 放在了项目的根目录！"}
+# ====================================================================
 
 def natural_sort_key(s):
     return [(0, int(text)) if text.isdigit() else (1, text.lower()) for text in re.split(r'(\d+)', s)]
@@ -79,6 +81,8 @@ def get_content(req: ContentRequest):
                 break
     return {"text": "、".join(combined_words)}
 
+
+# ================= 🚀 保留成功的纯 Python MP3 物理帧拼接 =================
 def get_silence_mp3(duration_ms: int) -> bytes:
     frame_hex = "fff344c400000003480000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
     silent_frame = bytes.fromhex(frame_hex)
@@ -110,36 +114,32 @@ async def stream_audio(
         silence_gap = get_silence_mp3(pause_ms)
         word_gap = get_silence_mp3(word_gap_ms)
 
-        # 🚨 核心逻辑：开辟一个内存池，把所有音频和停顿都积攒起来
-        final_audio = bytearray()
-
-        for i, word in enumerate(words):
-            communicate = edge_tts.Communicate(text=word, voice=voice, rate=speed_rate, pitch=pitch_rate)
-            word_audio = b""
-            
-            try:
-                async for chunk in communicate.stream():
-                    if chunk["type"] == "audio":
-                        word_audio += chunk["data"]
-            except Exception as e:
-                print(f"[ERROR] 获取词语 '{word}' 失败: {e}")
-                continue
+        async def generate():
+            for i, word in enumerate(words):
+                communicate = edge_tts.Communicate(text=word, voice=voice, rate=speed_rate, pitch=pitch_rate)
+                word_audio = b""
                 
-            if not word_audio:
-                continue
+                try:
+                    async for chunk in communicate.stream():
+                        if chunk["type"] == "audio":
+                            word_audio += chunk["data"]
+                except Exception as e:
+                    print(f"[ERROR] 获取词语 '{word}' 失败: {e}")
+                    continue
+                    
+                if not word_audio:
+                    continue
+                    
+                yield word_audio     
+                yield silence_gap    
+                yield word_audio     
+                yield silence_gap    
+                yield word_audio     
                 
-            # 直接在内存里拼装
-            final_audio.extend(word_audio)
-            final_audio.extend(silence_gap)
-            final_audio.extend(word_audio)
-            final_audio.extend(silence_gap)
-            final_audio.extend(word_audio)
-            
-            if i < len(words) - 1:
-                final_audio.extend(word_gap)
-                
-        # 🚨 一次性把拼好的完整 MP3 发出！自带 Content-Length，原生播放器完美兼容！
-        return Response(content=bytes(final_audio), media_type="audio/mpeg")
+                if i < len(words) - 1:
+                    yield word_gap
+                    
+        return StreamingResponse(generate(), media_type="audio/mpeg")
         
     except Exception as e:
         print(f"[FATAL ERROR] 音频合成整体故障: {e}")
