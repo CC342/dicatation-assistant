@@ -33,6 +33,33 @@ def serve_homepage():
             return HTMLResponse(content=f.read())
     return {"detail": "网页版未找到"}
 
+
+# ================= 🚀 新增：年级专属中文智能排序 =================
+def grade_sort_key(s):
+    # 1. 把中文数字翻译成真正的数字权重
+    zh_num_map = {'一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10}
+    grade_num = 0
+    for char in s:
+        if char in zh_num_map:
+            grade_num = zh_num_map[char]
+            break
+            
+    # 兼容阿拉伯数字命名 (如: 5年级)
+    if grade_num == 0:
+        match = re.search(r'\d+', s)
+        if match:
+            grade_num = int(match.group())
+
+    # 2. 赋予上下册权重（下册比上册大，排在前面）
+    semester_weight = 0
+    if '下' in s:
+        semester_weight = 2
+    elif '上' in s:
+        semester_weight = 1
+        
+    return (grade_num, semester_weight)
+
+# 普通文件的数字排序（保留用于第1课、第2课的排序）
 def natural_sort_key(s):
     return [(0, int(text)) if text.isdigit() else (1, text.lower()) for text in re.split(r'(\d+)', s)]
 
@@ -41,8 +68,12 @@ def get_grades():
     if not os.path.exists(BASE_DIR):
         return {"grades": ["请先创建年级"]}
     grades = [d for d in os.listdir(BASE_DIR) if os.path.isdir(os.path.join(BASE_DIR, d))]
-    grades.sort(key=natural_sort_key)
+    
+    # 🚨 核心改动：使用智能年级排序，并且 reverse=True 强行倒序（高年级在上）
+    grades.sort(key=grade_sort_key, reverse=True)
+    
     return {"grades": grades if grades else ["请先创建年级"]}
+# =================================================================
 
 @app.get("/api/files/{grade}")
 def get_files(grade: str):
@@ -55,6 +86,7 @@ def get_files(grade: str):
         if not f.startswith('.'):
             name, _ = os.path.splitext(f)
             files.append(name)
+    # 课时依然保持从小到大正向排序（第1课在最前）
     files.sort(key=natural_sort_key)
     return {"files": files}
 
@@ -81,28 +113,17 @@ def get_content(req: ContentRequest):
     return {"text": "、".join(combined_words)}
 
 
-# ================= 🚀 音质拯救计划：码率对齐与清洗 =================
-
+# ================= 音质拯救计划：码率对齐与清洗 =================
 def clean_mp3_data(data: bytes) -> bytes:
-    """
-    清洗 MP3 数据，剥离头尾的文本标签，彻底消灭“刺啦”杂音。
-    """
     res = bytearray(data)
-    # 剥离开头的 ID3v2 标签
     while res.startswith(b"ID3") and len(res) >= 10:
         size = (res[6] << 21) | (res[7] << 14) | (res[8] << 7) | res[9]
         res = res[10 + size:]
-    # 剥离结尾的 ID3v1 标签
     if len(res) >= 128 and res[-128:-125] == b"TAG":
         res = res[:-128]
     return bytes(res)
 
 def get_silence_mp3(duration_ms: int) -> bytes:
-    """
-    生成 100% 匹配微软输出的 48kbps, 24kHz 单声道静音帧。
-    杜绝播放器因来回切换码率而导致的微小卡顿。
-    """
-    # 帧大小 = 144 bytes，时长 = 24ms
     frame_hex = "fff364c40000000348" + "00" * 135
     silent_frame = bytes.fromhex(frame_hex)
     num_frames = duration_ms // 24
@@ -143,14 +164,11 @@ async def stream_audio(
             except Exception as e:
                 print(f"[ERROR] 获取词语 '{word}' 失败: {e}")
             
-            # 🚨 在这里将杂音元凶清洗干净！
             return clean_mp3_data(bytes(audio_data))
 
-        # 异步并发获取所有发音
         tasks = [fetch_word(word) for word in words]
         word_audios = await asyncio.gather(*tasks)
 
-        # 在内存中完美无缝拼装
         final_audio = bytearray()
         for i, word_audio in enumerate(word_audios):
             if not word_audio:
