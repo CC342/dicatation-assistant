@@ -13,6 +13,28 @@ from mangum import Mangum
 
 import edge_tts
 
+# ============ 🔧 edge-tts 403 修复补丁（2026-10-13）============
+# 症状：微软正在把 Edge 朗读接口从旧版 v1 (speech.platform.bing.com)
+#       迁移到新版 v2 (api.msedgeservices.com)，已升级的机房节点会
+#       直接拒绝旧版 WebSocket 握手，返回 403（日志里每个词语都报
+#       403 就是这个原因，不是代码写错了，也不是被限流）。
+# 修法：把 edge-tts 建连时用的 WebSocket 地址切到微软新版 v2 接口
+#       （和 Edge 155 浏览器实际用的同一套），token 生成逻辑不动。
+# 参考：https://github.com/rany2/edge-tts/issues/490
+try:
+    import edge_tts.communicate as _edge_communicate
+    from edge_tts import constants as _edge_constants
+    _NEW_WSS_URL = (
+        "wss://api.msedgeservices.com/tts/cognitiveservices/websocket/v1"
+        f"?Ocp-Apim-Subscription-Key={_edge_constants.TRUSTED_CLIENT_TOKEN}"
+    )
+    _edge_communicate.WSS_URL = _NEW_WSS_URL  # communicate.py 每次建连时读取该变量
+    _edge_constants.WSS_URL = _NEW_WSS_URL
+    print("[INFO] edge-tts 已切换到微软 v2 语音接口")
+except Exception as _e:
+    print(f"[WARN] edge-tts v2 接口补丁未生效: {_e}")
+# ============================================================
+
 app = FastAPI()
 
 app.add_middleware(
@@ -43,7 +65,7 @@ def grade_sort_key(s):
         if char in zh_num_map:
             grade_num = zh_num_map[char]
             break
-            
+
     # 兼容阿拉伯数字命名 (如: 5年级)
     if grade_num == 0:
         match = re.search(r'\d+', s)
@@ -56,7 +78,7 @@ def grade_sort_key(s):
         semester_weight = 2
     elif '上' in s:
         semester_weight = 1
-        
+
     return (grade_num, semester_weight)
 
 # 普通文件的数字排序（保留用于第1课、第2课的排序）
@@ -68,10 +90,10 @@ def get_grades():
     if not os.path.exists(BASE_DIR):
         return {"grades": ["请先创建年级"]}
     grades = [d for d in os.listdir(BASE_DIR) if os.path.isdir(os.path.join(BASE_DIR, d))]
-    
+
     # 🚨 核心改动：使用智能年级排序，并且 reverse=True 强行倒序（高年级在上）
     grades.sort(key=grade_sort_key, reverse=True)
-    
+
     return {"grades": grades if grades else ["请先创建年级"]}
 # =================================================================
 
@@ -148,7 +170,7 @@ async def stream_audio(
 
         speed_rate = f"{int((speed - 1.0) * 100):+d}%"
         pitch_rate = f"{int(pitch):+d}Hz"
-        
+
         pause_ms = int(pause_seconds * 1000)
         word_gap_ms = pause_ms + 500
         silence_gap = get_silence_mp3(pause_ms)
@@ -163,7 +185,7 @@ async def stream_audio(
                         audio_data.extend(chunk["data"])
             except Exception as e:
                 print(f"[ERROR] 获取词语 '{word}' 失败: {e}")
-            
+
             return clean_mp3_data(bytes(audio_data))
 
         tasks = [fetch_word(word) for word in words]
@@ -178,12 +200,12 @@ async def stream_audio(
             final_audio.extend(word_audio)
             final_audio.extend(silence_gap)
             final_audio.extend(word_audio)
-            
+
             if i < len(word_audios) - 1:
                 final_audio.extend(word_gap)
-                
+
         return Response(content=bytes(final_audio), media_type="audio/mpeg")
-        
+
     except Exception as e:
         print(f"[FATAL ERROR] 音频合成整体故障: {e}")
         raise HTTPException(status_code=500, detail=str(e))
