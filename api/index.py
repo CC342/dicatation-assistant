@@ -36,6 +36,15 @@ except Exception as _e:
     print(f"[WARN] edge-tts v2 接口补丁未生效: {_e}")
 # ============================================================
 
+# ============ 连接复用 + 音频缓存（2026-10-15）============
+# v2 接口按 IP 限握手频率：原来 60 个词 = 60 次握手，必撞 429。
+# 改法：每条 websocket 建连一次、顺序合成多个词语（2 条连接并行），
+# 握手从 60 次降到 2 次；词语去重 + 实例内音频缓存进一步减少请求。
+_WORD_AUDIO_CACHE: dict = {}
+_WORD_AUDIO_CACHE_MAX = 2000
+_POOL_SIZE = 2
+# ============================================================
+
 app = FastAPI()
 
 app.add_middleware(
@@ -124,6 +133,7 @@ class StreamRequest(BaseModel):
     pause_seconds: float = 1.5
     pitch: int = -15
     shuffle_bool: bool = False
+    client: str = "web"  # 调用方标识：web / miniprogram，用于日志区分
 
 @app.post("/api/content")
 def get_content(req: ContentRequest):
@@ -160,14 +170,229 @@ def get_silence_mp3(duration_ms: int) -> bytes:
     num_frames = duration_ms // 24
     return silent_frame * num_frames
 
+
+class _EdgeWS:
+    """一条可复用的 edge-tts websocket 连接：握手一次，顺序合成多个词语。
+
+    协议细节直接对齐 edge-tts 7.2.8 的 Communicate.__stream：
+    建连 → 发 speech.config → 逐词发 ssml（X-RequestId 区分）→ 收 audio 直到 turn.end。
+    """
+
+    def __init__(self, voice: str, rate: str, pitch: str):
+        self.voice = voice
+        self.rate = rate
+        self.pitch = pitch
+        self._session = None
+        self._ws = None
+
+    def _ws_url(self) -> str:
+        from edge_tts.drm import DRM
+        # 读取补丁后的 WSS_URL（已切到 v2 接口）
+        return (
+            f"{_edge_communicate.WSS_URL}"
+            f"&ConnectionId={_edge_communicate.connect_id()}"
+            f"&Sec-MS-GEC={DRM.generate_sec_ms_gec()}"
+            f"&Sec-MS-GEC-Version={_edge_communicate.SEC_MS_GEC_VERSION}"
+        )
+
+    async def connect(self) -> None:
+        """建连（含 429 退避重试），成功后发送 speech.config。"""
+        from edge_tts.drm import DRM
+        await self._safe_close()  # 重连时先关掉旧连接，避免泄漏
+        for attempt in range(8):
+            try:
+                self._session = aiohttp.ClientSession(
+                    trust_env=True,
+                    timeout=aiohttp.ClientTimeout(total=None, sock_connect=10, sock_read=60),
+                )
+                self._ws = await self._session.ws_connect(
+                    self._ws_url(),
+                    compress=15,
+                    headers=DRM.headers_with_muid(_edge_communicate.WSS_HEADERS),
+                    ssl=_edge_communicate._SSL_CTX,
+                )
+                await self._ws.send_str(
+                    f"X-Timestamp:{_edge_communicate.date_to_string()}\r\n"
+                    "Content-Type:application/json; charset=utf-8\r\n"
+                    "Path:speech.config\r\n\r\n"
+                    '{"context":{"synthesis":{"audio":{"metadataoptions":'
+                    '"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"true"},'
+                    '"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}\r\n'
+                )
+                return
+            except aiohttp.WSServerHandshakeError as e:
+                await self._safe_close()
+                if e.status != 429 or attempt == 7:
+                    raise
+                wait = min(2 ** attempt, 8) + random.uniform(0, 0.5)
+                print(f"[WARN] 语音连接触发限流，{wait:.1f}s 后重连 (第 {attempt + 1} 次)")
+                await asyncio.sleep(wait)
+
+    async def _safe_close(self) -> None:
+        try:
+            if self._ws is not None:
+                await self._ws.close()
+        except Exception:
+            pass
+        try:
+            if self._session is not None:
+                await self._session.close()
+        except Exception:
+            pass
+        self._ws = None
+        self._session = None
+
+    async def close(self) -> None:
+        await self._safe_close()
+
+    async def synth(self, word: str) -> bytes:
+        """在复用连接上合成一个词语，返回清洗后的 mp3。"""
+        from xml.sax.saxutils import escape
+        esc = escape(_edge_communicate.remove_incompatible_characters(word))
+        ssml = (
+            "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>"
+            f"<voice name='{self.voice}'>"
+            f"<prosody pitch='{self.pitch}' rate='{self.rate}' volume='+0%'>"
+            f"{esc}</prosody></voice></speak>"
+        )
+        await self._ws.send_str(
+            f"X-RequestId:{_edge_communicate.connect_id()}\r\n"
+            "Content-Type:application/ssml+xml\r\n"
+            f"X-Timestamp:{_edge_communicate.date_to_string()}Z\r\n"
+            "Path:ssml\r\n\r\n"
+            f"{ssml}"
+        )
+        audio = bytearray()
+        async for msg in self._ws:
+            if msg.type == aiohttp.WSMsgType.TEXT:
+                raw = msg.data.encode("utf-8")
+                sep = raw.find(b"\r\n\r\n")
+                if sep < 0:
+                    continue
+                headers, _ = _edge_communicate.get_headers_and_data(raw, sep)
+                if headers.get(b"Path") == b"turn.end":
+                    break
+                # response / turn.start / audio.metadata：忽略
+            elif msg.type == aiohttp.WSMsgType.BINARY:
+                if len(msg.data) < 2:
+                    continue
+                hlen = int.from_bytes(msg.data[:2], "big")
+                if hlen > len(msg.data):
+                    continue
+                headers, payload = _edge_communicate.get_headers_and_data(msg.data, hlen)
+                if headers.get(b"Path") == b"audio" and payload:
+                    audio.extend(payload)
+            elif msg.type == aiohttp.WSMsgType.ERROR:
+                raise ConnectionError(f"websocket error: {msg.data}")
+        return clean_mp3_data(bytes(audio))
+
+
+async def _synth_with_pool(pending: List[str], voice: str, rate: str, pitch: str,
+                           out: dict) -> bool:
+    """连接池合成。返回 True=成功；False=探针失败，调用方回退逐词模式。"""
+    q: asyncio.Queue = asyncio.Queue()
+
+    async def worker(ws: _EdgeWS):
+        while True:
+            w = await q.get()
+            if w is None:
+                q.task_done()
+                return
+            try:
+                audio = await asyncio.wait_for(ws.synth(w), timeout=30)
+                if not audio:
+                    raise RuntimeError("empty audio")
+            except Exception as e:
+                print(f"[WARN] 词语 '{w}' 合成异常，重连重试: {e}")
+                try:
+                    await ws.connect()
+                    audio = await asyncio.wait_for(ws.synth(w), timeout=30)
+                except Exception as e2:
+                    print(f"[ERROR] 获取词语 '{w}' 失败: {e2}")
+                    audio = b""
+            key = (w, voice, rate, pitch)
+            if audio and len(_WORD_AUDIO_CACHE) < _WORD_AUDIO_CACHE_MAX:
+                _WORD_AUDIO_CACHE[key] = audio
+            out[w] = audio
+            q.task_done()
+
+    conns: List[_EdgeWS] = []
+    try:
+        for _ in range(min(_POOL_SIZE, len(pending))):
+            ws = _EdgeWS(voice, rate, pitch)
+            await ws.connect()
+            conns.append(ws)
+        # 探针：先合成第一个词验证协议通路，失败则整体回退
+        probe = await asyncio.wait_for(conns[0].synth(pending[0]), timeout=30)
+        if not probe:
+            raise RuntimeError("probe returned empty audio")
+        key = (pending[0], voice, rate, pitch)
+        if len(_WORD_AUDIO_CACHE) < _WORD_AUDIO_CACHE_MAX:
+            _WORD_AUDIO_CACHE[key] = probe
+        out[pending[0]] = probe
+
+        for w in pending[1:]:
+            q.put_nowait(w)
+        workers = [asyncio.create_task(worker(ws)) for ws in conns]
+        for _ in workers:
+            q.put_nowait(None)
+        await q.join()
+        await asyncio.gather(*workers)
+        return True
+    except Exception as e:
+        print(f"[WARN] 连接池模式不可用，回退逐词模式: {e}")
+        return False
+    finally:
+        for ws in conns:
+            await ws.close()
+
+
+async def _synth_legacy(pending: List[str], voice: str, rate: str, pitch: str,
+                        out: dict) -> None:
+    """回退模式：一词一握手（旧逻辑），带 429 退避重试。"""
+    sem = asyncio.Semaphore(3)
+
+    async def fetch_word(word: str) -> bytes:
+        for attempt in range(8):
+            async with sem:
+                try:
+                    communicate = edge_tts.Communicate(
+                        text=word, voice=voice, rate=rate, pitch=pitch
+                    )
+                    audio_data = bytearray()
+                    async for chunk in communicate.stream():
+                        if chunk["type"] == "audio":
+                            audio_data.extend(chunk["data"])
+                    return clean_mp3_data(bytes(audio_data))
+                except aiohttp.WSServerHandshakeError as e:
+                    if e.status != 429 or attempt == 7:
+                        print(f"[ERROR] 获取词语 '{word}' 失败: {e}")
+                        return b""
+                except Exception as e:
+                    print(f"[ERROR] 获取词语 '{word}' 失败: {e}")
+                    return b""
+            wait = min(2 ** attempt, 8) + random.uniform(0, 0.5)
+            print(f"[WARN] 词语 '{word}' 触发限流，{wait:.1f}s 后重试 (第 {attempt + 1} 次)")
+            await asyncio.sleep(wait)
+        return b""
+
+    audios = await asyncio.gather(*[fetch_word(w) for w in pending])
+    for w, audio in zip(pending, audios):
+        key = (w, voice, rate, pitch)
+        if audio and len(_WORD_AUDIO_CACHE) < _WORD_AUDIO_CACHE_MAX:
+            _WORD_AUDIO_CACHE[key] = audio
+        out[w] = audio
+
 # POST：词语走 JSON 正文，不再拼进 URL，避免词多时 URL 超长被拒（网页版用这个）
 @app.post("/api/stream")
 async def stream_audio_post(req: StreamRequest):
     return await _build_stream_audio(
-        req.text, req.voice, req.speed, req.pause_seconds, req.pitch, req.shuffle_bool
+        req.text, req.voice, req.speed, req.pause_seconds, req.pitch, req.shuffle_bool,
+        req.client,
     )
 
 # GET：保留给小程序旧版调用（参数拼 URL，词多时仍可能超长，小程序建议也改 POST）
+# client 默认 miniprogram：当前只有小程序走 GET；如调用方显式传了 client 则以参数为准
 @app.get("/api/stream")
 async def stream_audio_get(
     text: str,
@@ -176,8 +401,9 @@ async def stream_audio_get(
     pause_seconds: float = 1.5,
     pitch: int = -15,
     shuffle_bool: bool = False,
+    client: str = "miniprogram",
 ):
-    return await _build_stream_audio(text, voice, speed, pause_seconds, pitch, shuffle_bool)
+    return await _build_stream_audio(text, voice, speed, pause_seconds, pitch, shuffle_bool, client)
 
 
 async def _build_stream_audio(
@@ -187,12 +413,15 @@ async def _build_stream_audio(
     pause_seconds: float,
     pitch: int,
     shuffle_bool: bool,
+    client: str = "unknown",
 ):
     try:
         raw_words = re.split(r'[,，\s、\n\r]+', text)
         words = [w.strip() for w in raw_words if w.strip()]
         if not words:
             raise HTTPException(status_code=400, detail="词语列表为空")
+        # 每次请求打一行：Vercel 日志里按 requestId 关联，后面所有 WARN/ERROR 都归到这次请求
+        print(f"[INFO] /api/stream client={client} words={len(words)}")
         if shuffle_bool:
             random.shuffle(words)
 
@@ -204,38 +433,28 @@ async def _build_stream_audio(
         silence_gap = get_silence_mp3(pause_ms)
         word_gap = get_silence_mp3(word_gap_ms)
 
-        # 并发限流 + 429 退避重试（2026-10-15）：
-        # 新版 v2 接口对 WebSocket 握手频率限制更严，几十个词语同时建连会
-        # 直接吃 429。这里一次只放 4 个并发，遇到 429 自动退避重试（最多 5 次）。
-        _word_semaphore = asyncio.Semaphore(4)
+        # 同一批里重复的词语只抓一次（多选课时时很常见），拼回去时按原顺序
+        unique_words = list(dict.fromkeys(words))
 
-        async def fetch_word(word: str) -> bytes:
-            for attempt in range(5):
-                async with _word_semaphore:
-                    try:
-                        communicate = edge_tts.Communicate(
-                            text=word, voice=voice, rate=speed_rate, pitch=pitch_rate
-                        )
-                        audio_data = bytearray()
-                        async for chunk in communicate.stream():
-                            if chunk["type"] == "audio":
-                                audio_data.extend(chunk["data"])
-                        return clean_mp3_data(bytes(audio_data))
-                    except aiohttp.WSServerHandshakeError as e:
-                        if e.status != 429 or attempt == 4:
-                            print(f"[ERROR] 获取词语 '{word}' 失败: {e}")
-                            return b""
-                        # 429 限流：释放信号量后在下面退避重试
-                    except Exception as e:
-                        print(f"[ERROR] 获取词语 '{word}' 失败: {e}")
-                        return b""
-                wait = (2 ** attempt) + random.uniform(0, 0.5)
-                print(f"[WARN] 词语 '{word}' 触发限流，{wait:.1f}s 后重试 (第 {attempt + 1} 次)")
-                await asyncio.sleep(wait)
-            return b""
+        # 缓存过滤：命中缓存的不再请求
+        pending: List[str] = []
+        audio_map: dict = {}
+        for w in unique_words:
+            key = (w, voice, speed_rate, pitch_rate)
+            hit = _WORD_AUDIO_CACHE.get(key)
+            if hit is not None:
+                audio_map[w] = hit
+            else:
+                pending.append(w)
 
-        tasks = [fetch_word(word) for word in words]
-        word_audios = await asyncio.gather(*tasks)
+        if pending:
+            # 连接池模式：2 条复用连接顺序合成，握手从 N 次降到 2 次；
+            # 探针失败则回退到一词一握手的旧模式
+            ok = await _synth_with_pool(pending, voice, speed_rate, pitch_rate, audio_map)
+            if not ok:
+                await _synth_legacy(pending, voice, speed_rate, pitch_rate, audio_map)
+
+        word_audios = [audio_map[w] for w in words]
 
         final_audio = bytearray()
         for i, word_audio in enumerate(word_audios):
