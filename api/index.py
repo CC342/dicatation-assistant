@@ -117,6 +117,14 @@ class ContentRequest(BaseModel):
     grade: str
     files: List[str]
 
+class StreamRequest(BaseModel):
+    text: str
+    voice: str = "zh-CN-XiaoxiaoNeural"
+    speed: float = 0.85
+    pause_seconds: float = 1.5
+    pitch: int = -15
+    shuffle_bool: bool = False
+
 @app.post("/api/content")
 def get_content(req: ContentRequest):
     grade = unquote(req.grade)
@@ -152,14 +160,33 @@ def get_silence_mp3(duration_ms: int) -> bytes:
     num_frames = duration_ms // 24
     return silent_frame * num_frames
 
+# POST：词语走 JSON 正文，不再拼进 URL，避免词多时 URL 超长被拒（网页版用这个）
+@app.post("/api/stream")
+async def stream_audio_post(req: StreamRequest):
+    return await _build_stream_audio(
+        req.text, req.voice, req.speed, req.pause_seconds, req.pitch, req.shuffle_bool
+    )
+
+# GET：保留给小程序旧版调用（参数拼 URL，词多时仍可能超长，小程序建议也改 POST）
 @app.get("/api/stream")
-async def stream_audio(
+async def stream_audio_get(
     text: str,
     voice: str = "zh-CN-XiaoxiaoNeural",
     speed: float = 0.85,
     pause_seconds: float = 1.5,
     pitch: int = -15,
-    shuffle_bool: bool = False
+    shuffle_bool: bool = False,
+):
+    return await _build_stream_audio(text, voice, speed, pause_seconds, pitch, shuffle_bool)
+
+
+async def _build_stream_audio(
+    text: str,
+    voice: str,
+    speed: float,
+    pause_seconds: float,
+    pitch: int,
+    shuffle_bool: bool,
 ):
     try:
         raw_words = re.split(r'[,，\s、\n\r]+', text)
