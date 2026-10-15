@@ -325,7 +325,8 @@
                     speed: parseFloat(document.getElementById('speedSlider').value),
                     pause_seconds: parseFloat(document.getElementById('pauseSlider').value),
                     pitch: parseInt(document.getElementById('pitchSlider').value),
-                    shuffle_bool: document.getElementById('shuffleToggle').checked
+                    shuffle_bool: document.getElementById('shuffleToggle').checked,
+                    client: "web"
                 })
             });
             if (!res.ok) throw new Error("HTTP " + res.status);
