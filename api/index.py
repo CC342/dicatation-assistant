@@ -11,6 +11,7 @@ from fastapi.responses import Response, HTMLResponse
 from pydantic import BaseModel
 from mangum import Mangum
 
+import aiohttp
 import edge_tts
 
 # ============ 🔧 edge-tts 403 修复补丁（2026-10-13）============
@@ -176,17 +177,35 @@ async def stream_audio(
         silence_gap = get_silence_mp3(pause_ms)
         word_gap = get_silence_mp3(word_gap_ms)
 
-        async def fetch_word(word: str) -> bytes:
-            communicate = edge_tts.Communicate(text=word, voice=voice, rate=speed_rate, pitch=pitch_rate)
-            audio_data = bytearray()
-            try:
-                async for chunk in communicate.stream():
-                    if chunk["type"] == "audio":
-                        audio_data.extend(chunk["data"])
-            except Exception as e:
-                print(f"[ERROR] 获取词语 '{word}' 失败: {e}")
+        # 并发限流 + 429 退避重试（2026-10-15）：
+        # 新版 v2 接口对 WebSocket 握手频率限制更严，几十个词语同时建连会
+        # 直接吃 429。这里一次只放 4 个并发，遇到 429 自动退避重试（最多 5 次）。
+        _word_semaphore = asyncio.Semaphore(4)
 
-            return clean_mp3_data(bytes(audio_data))
+        async def fetch_word(word: str) -> bytes:
+            for attempt in range(5):
+                async with _word_semaphore:
+                    try:
+                        communicate = edge_tts.Communicate(
+                            text=word, voice=voice, rate=speed_rate, pitch=pitch_rate
+                        )
+                        audio_data = bytearray()
+                        async for chunk in communicate.stream():
+                            if chunk["type"] == "audio":
+                                audio_data.extend(chunk["data"])
+                        return clean_mp3_data(bytes(audio_data))
+                    except aiohttp.WSServerHandshakeError as e:
+                        if e.status != 429 or attempt == 4:
+                            print(f"[ERROR] 获取词语 '{word}' 失败: {e}")
+                            return b""
+                        # 429 限流：释放信号量后在下面退避重试
+                    except Exception as e:
+                        print(f"[ERROR] 获取词语 '{word}' 失败: {e}")
+                        return b""
+                wait = (2 ** attempt) + random.uniform(0, 0.5)
+                print(f"[WARN] 词语 '{word}' 触发限流，{wait:.1f}s 后重试 (第 {attempt + 1} 次)")
+                await asyncio.sleep(wait)
+            return b""
 
         tasks = [fetch_word(word) for word in words]
         word_audios = await asyncio.gather(*tasks)
