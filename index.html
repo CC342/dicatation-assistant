@@ -57,7 +57,7 @@
         }
 
         .ios-glass h3 { margin-top: 0; color: #1d1d1f; }
-        
+
         label.title-label {
             display: block;
             font-weight: 600;
@@ -87,7 +87,7 @@
         /* 平铺铺开的标签按钮 */
         .file-list-container {
             display: flex;
-            flex-wrap: wrap; 
+            flex-wrap: wrap;
             gap: 10px;
             margin-top: 10px;
         }
@@ -102,11 +102,11 @@
             font-weight: 600;
             transition: all 0.2s ease;
             color: #1d1d1f;
-            user-select: none; 
+            user-select: none;
         }
 
         .file-tag input[type="checkbox"] {
-            display: none; 
+            display: none;
         }
 
         .file-tag:hover {
@@ -173,14 +173,14 @@
         <div class="col">
             <div class="ios-glass">
                 <h3>🗂️ 课本源选择</h3>
-                
+
                 <label class="title-label">选择年级</label>
                 <select id="gradeSelect"></select>
 
                 <label class="title-label">全部课时（点击标签直接多选或取消）</label>
                 <div id="fileListContainer" class="file-list-container">
                     </div>
-                
+
                 <button class="minor-btn" id="btnSelectAll">✨ 一键全选当前年级课时</button>
             </div>
 
@@ -196,7 +196,7 @@
         <div class="col">
             <div class="ios-glass">
                 <h3>⚙️ 老师发音微调</h3>
-                
+
                 <label class="title-label">选择语文老师声线</label>
                 <select id="voiceSelect">
                     <option value="zh-CN-XiaoxiaoNeural">✅ 稳过女声：标准普通话 (晓晓 - 默认)</option>
@@ -251,15 +251,15 @@
         const grade = gradeSelect.value;
         const res = await fetch(`/api/files/${encodeURIComponent(grade)}`);
         const data = await res.json();
-        
+
         if (data.files.length > 0) {
             fileListContainer.innerHTML = data.files.map((f, index) => {
                 const isChecked = index === 0 ? 'checked' : '';
                 const selectedClass = index === 0 ? 'selected' : '';
                 return `
                     <label class="file-tag ${selectedClass}">
-                        <input type="checkbox" value="${f}" ${isChecked} 
-                               onchange="this.parentElement.classList.toggle('selected', this.checked)"> 
+                        <input type="checkbox" value="${f}" ${isChecked}
+                               onchange="this.parentElement.classList.toggle('selected', this.checked)">
                         ${f}
                     </label>
                 `;
@@ -276,12 +276,12 @@
         const grade = gradeSelect.value;
         const selectedCheckboxes = document.querySelectorAll('#fileListContainer input[type="checkbox"]:checked');
         const selectedFiles = Array.from(selectedCheckboxes).map(cb => cb.value);
-        
+
         if (selectedFiles.length === 0) {
             inputText.value = "";
             return;
         }
-        
+
         const res = await fetch('/api/content', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -295,7 +295,7 @@
     gradeSelect.addEventListener('change', fetchFiles);
     // 监听标签点击事件触发内容更新
     fileListContainer.addEventListener('change', fetchContent);
-    
+
     // 一键选中
     document.getElementById('btnSelectAll').addEventListener('click', () => {
         const checkboxes = document.querySelectorAll('#fileListContainer input[type="checkbox"]');
@@ -306,33 +306,41 @@
         fetchContent();
     });
 
-    // 生成播放音频
-    document.getElementById('btnGenerate').addEventListener('click', () => {
+    // 生成播放音频（改成 POST：词语走 JSON 正文，不再拼进 URL，避免词多时 URL 超长被拒）
+    document.getElementById('btnGenerate').addEventListener('click', async () => {
         const text = inputText.value.trim();
         if (!text) return alert("当前输入框是空的，没有可听写的词语！");
-        
+
         const btn = document.getElementById('btnGenerate');
         const originalText = btn.innerText;
         btn.innerText = "⏳ 音频极速缓冲中...";
 
-        const voice = document.getElementById('voiceSelect').value;
-        const speed = document.getElementById('speedSlider').value;
-        const pause = document.getElementById('pauseSlider').value;
-        const pitch = document.getElementById('pitchSlider').value;
-        const shuffle = document.getElementById('shuffleToggle').checked;
+        try {
+            const res = await fetch('/api/stream', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    text: text,
+                    voice: document.getElementById('voiceSelect').value,
+                    speed: parseFloat(document.getElementById('speedSlider').value),
+                    pause_seconds: parseFloat(document.getElementById('pauseSlider').value),
+                    pitch: parseInt(document.getElementById('pitchSlider').value),
+                    shuffle_bool: document.getElementById('shuffleToggle').checked
+                })
+            });
+            if (!res.ok) throw new Error("HTTP " + res.status);
 
-        // 调用 API
-        const url = `/api/stream?text=${encodeURIComponent(text)}&voice=${voice}&speed=${speed}&pause_seconds=${pause}&pitch=${pitch}&shuffle_bool=${shuffle}`;
-        
-        const player = document.getElementById('audioPlayer');
-        player.src = url;
-        
-        player.play().then(() => {
+            const blob = await res.blob();
+            const player = document.getElementById('audioPlayer');
+            if (player.src && player.src.startsWith('blob:')) URL.revokeObjectURL(player.src);
+            player.src = URL.createObjectURL(blob);
+            await player.play();
+        } catch (err) {
+            console.error("音频生成失败", err);
+            alert("音频生成失败，请稍后重试");
+        } finally {
             btn.innerText = originalText;
-        }).catch(err => {
-            btn.innerText = originalText;
-            console.error("播放被拦截，可能是浏览器自动播放限制", err);
-        });
+        }
     });
 
     init();
