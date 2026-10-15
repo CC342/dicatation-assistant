@@ -215,7 +215,7 @@ class _EdgeWS:
                     f"X-Timestamp:{_edge_communicate.date_to_string()}\r\n"
                     "Content-Type:application/json; charset=utf-8\r\n"
                     "Path:speech.config\r\n\r\n"
-                    '{"context":{"synthesis":{"audio":{"metadataoptions":'
+                    '{"context":{"synthesis":{"audio":{"metadataoptions":{'
                     '"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"true"},'
                     '"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}\r\n'
                 )
