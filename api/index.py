@@ -3,7 +3,7 @@ import re
 import random
 import asyncio
 from urllib.parse import unquote
-from typing import List
+from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -171,6 +171,24 @@ def get_silence_mp3(duration_ms: int) -> bytes:
     return silent_frame * num_frames
 
 
+# ================= 代理出口：Vercel 直连被微软封后的备选 =================
+# 启用条件：Vercel 环境变量 TTS_PROXY 配了 HTTP 代理地址，格式：
+#   http://host:port 或带鉴权 http://user:pass@host:port
+# 未配置时 proxy=None，行为与原来完全一致（直连）。
+def _tts_proxy() -> Optional[str]:
+    return os.environ.get("TTS_PROXY") or None
+
+
+def _proxy_label(url: str) -> str:
+    """日志用：只留 host:port，绝不打用户名密码。"""
+    try:
+        from urllib.parse import urlparse
+        u = urlparse(url)
+        return f"{u.hostname}:{u.port}" if u.port else (u.hostname or "proxy")
+    except Exception:
+        return "proxy"
+
+
 class _EdgeWS:
     """一条可复用的 edge-tts websocket 连接：握手一次，顺序合成多个词语。
 
@@ -210,6 +228,7 @@ class _EdgeWS:
                     compress=15,
                     headers=DRM.headers_with_muid(_edge_communicate.WSS_HEADERS),
                     ssl=_edge_communicate._SSL_CTX,
+                    proxy=_tts_proxy(),
                 )
                 await self._ws.send_str(
                     f"X-Timestamp:{_edge_communicate.date_to_string()}\r\n"
@@ -357,7 +376,8 @@ async def _synth_legacy(pending: List[str], voice: str, rate: str, pitch: str,
             async with sem:
                 try:
                     communicate = edge_tts.Communicate(
-                        text=word, voice=voice, rate=rate, pitch=pitch
+                        text=word, voice=voice, rate=rate, pitch=pitch,
+                        proxy=_tts_proxy(),
                     )
                     audio_data = bytearray()
                     async for chunk in communicate.stream():
@@ -422,6 +442,9 @@ async def _build_stream_audio(
             raise HTTPException(status_code=400, detail="词语列表为空")
         # 每次请求打一行：Vercel 日志里按 requestId 关联，后面所有 WARN/ERROR 都归到这次请求
         print(f"[INFO] /api/stream client={client} words={len(words)}")
+        _p = _tts_proxy()
+        if _p:
+            print(f"[INFO] TTS egress=proxy {_proxy_label(_p)}")
         if shuffle_bool:
             random.shuffle(words)
 
