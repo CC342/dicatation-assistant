@@ -37,6 +37,23 @@ except Exception as _e:
     print(f"[WARN] edge-tts v2 接口补丁未生效: {_e}")
 # ============================================================
 
+# ============ Worker 中转（2026-10-26）============
+# TTS_WS_BASE 设为 Cloudflare Worker 的 wss 地址（如 wss://xxx.workers.dev）时，
+# websocket 改走 Worker 中转，绕开 Vercel 出口被微软边缘拦的问题；
+# 不设则直连微软，行为零变化。Worker 只转发到微软 TTS 固定地址，无法被当成通用代理。
+# 注意：补丁放在 import 时，因为 edge-tts 每次建连都读取模块级 WSS_URL，
+# 这样连接池、回退模式、探针三条路径都会一起走 Worker。
+try:
+    _TTS_WS_BASE = os.environ.get("TTS_WS_BASE", "").strip().rstrip("/")
+    if _TTS_WS_BASE:
+        _edge_communicate.WSS_URL = (
+            f"{_TTS_WS_BASE}?Ocp-Apim-Subscription-Key={_edge_constants.TRUSTED_CLIENT_TOKEN}"
+        )
+        _edge_constants.WSS_URL = _edge_communicate.WSS_URL
+        print("[INFO] TTS websocket 已切换到 Worker 中转")
+except Exception as _e:
+    print(f"[WARN] Worker 中转未生效: {_e}")
+
 # ============ 连接复用 + 音频缓存（2026-10-15）============
 # v2 接口按 IP 限握手频率：原来 60 个词 = 60 次握手，必撞 429。
 # 改法：每条 websocket 建连一次、顺序合成多个词语（2 条连接并行），
