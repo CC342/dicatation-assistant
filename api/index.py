@@ -1,6 +1,7 @@
 import os
 import re
 import random
+import socket
 import asyncio
 from urllib.parse import unquote
 from typing import List, Optional
@@ -220,6 +221,7 @@ class _EdgeWS:
         for attempt in range(8):
             try:
                 self._session = aiohttp.ClientSession(
+                    connector=aiohttp.TCPConnector(family=socket.AF_INET),
                     trust_env=True,
                     timeout=aiohttp.ClientTimeout(total=None, sock_connect=10, sock_read=60),
                 )
@@ -242,6 +244,7 @@ class _EdgeWS:
             except aiohttp.WSServerHandshakeError as e:
                 await self._safe_close()
                 if e.status != 429 or attempt == 7:
+                    print(f"[DEBUG] handshake status={e.status} headers={dict(e.headers)}")
                     raise
                 wait = min(2 ** attempt, 8) + random.uniform(0, 0.5)
                 print(f"[WARN] 语音连接触发限流，{wait:.1f}s 后重连 (第 {attempt + 1} 次)")
@@ -306,6 +309,25 @@ class _EdgeWS:
         return clean_mp3_data(bytes(audio))
 
 
+async def _debug_handshake_probe(voice: str, rate: str, pitch: str) -> None:
+    """调试探针：连接池失败时，用普通 HTTPS GET 请求同一地址，
+    看微软对非 websocket 请求回什么（状态 + 前 500 字正文），
+    帮助区分是被封、被 WAF 拦，还是其他原因。绝不打印 URL（内含 token）。"""
+    try:
+        probe_ws = _EdgeWS(voice, rate, pitch)
+        https_url = probe_ws._ws_url().replace("wss://", "https://", 1)
+        async with aiohttp.ClientSession(
+            connector=aiohttp.TCPConnector(family=socket.AF_INET),
+            trust_env=True,
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as session:
+            async with session.get(https_url, proxy=_tts_proxy()) as resp:
+                body = await resp.text(errors="replace")
+                print(f"[DEBUG] https-probe status={resp.status} body={body[:500]!r}")
+    except Exception as e:
+        print(f"[DEBUG] https-probe failed: {e}")
+
+
 async def _synth_with_pool(pending: List[str], voice: str, rate: str, pitch: str,
                            out: dict) -> bool:
     """连接池合成。返回 True=成功；False=探针失败，调用方回退逐词模式。"""
@@ -360,6 +382,7 @@ async def _synth_with_pool(pending: List[str], voice: str, rate: str, pitch: str
         return True
     except Exception as e:
         print(f"[WARN] 连接池模式不可用，回退逐词模式: {e}")
+        await _debug_handshake_probe(voice, rate, pitch)
         return False
     finally:
         for ws in conns:
@@ -378,6 +401,7 @@ async def _synth_legacy(pending: List[str], voice: str, rate: str, pitch: str,
                     communicate = edge_tts.Communicate(
                         text=word, voice=voice, rate=rate, pitch=pitch,
                         proxy=_tts_proxy(),
+                        connector=aiohttp.TCPConnector(family=socket.AF_INET),
                     )
                     audio_data = bytearray()
                     async for chunk in communicate.stream():
@@ -442,6 +466,7 @@ async def _build_stream_audio(
             raise HTTPException(status_code=400, detail="词语列表为空")
         # 每次请求打一行：Vercel 日志里按 requestId 关联，后面所有 WARN/ERROR 都归到这次请求
         print(f"[INFO] /api/stream client={client} words={len(words)}")
+        print(f"[INFO] runtime region={os.environ.get('VERCEL_REGION', 'unknown')}")
         _p = _tts_proxy()
         if _p:
             print(f"[INFO] TTS egress=proxy {_proxy_label(_p)}")
